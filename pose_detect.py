@@ -14,8 +14,8 @@ while cap.isOpened():
 
     results = model(frame, verbose=False)
 
-    # store per-person x-coordinate lists
-    person_x_coords = []
+    # store per-person coordinate lists
+    person_coords = []
 
     for r in results:
         if r.keypoints is None:
@@ -24,16 +24,21 @@ while cap.isOpened():
         keypoints = r.keypoints.xy  # shape: (num_people, 17, 2)
 
         for person_idx, person in enumerate(keypoints):
-            x_coords = []  # all x-values for this person
+            x_coords, y_coords = [], []  # x and y for this person
 
             # Collect coordinates for arm keypoints
             indices = [5, 6, 7, 8, 9, 10]  # L/R shoulder, elbow, wrist
             for i in indices:
                 x = float(person[i][0])
+                y = float(person[i][1])
                 x_coords.append(x)
+                y_coords.append(y)
 
-            # Save this person's sorted list
-            person_x_coords.append(sorted(x_coords))
+            # Save this person's sorted lists
+            person_coords.append({
+                "x_sorted": sorted(x_coords),
+                "y_sorted": sorted(y_coords)
+            })
 
             # Convert to int tuples for drawing
             L_shoulder = tuple(person[5].int().tolist())
@@ -62,9 +67,11 @@ while cap.isOpened():
             for point in [L_elbow, L_wrist, R_elbow, R_wrist]:
                 cv2.circle(frame, point, 6, (0, 255, 0), -1)
 
-    # Print each person's x-coordinate list
-    for i, coords in enumerate(person_x_coords, start=1):
-        print(f"Person {i} sorted x-coordinates: {coords}")
+    # Print each person's coordinate lists
+    for i, coords in enumerate(person_coords, start=1):
+        print(f"Person {i}:")
+        print(f"  Sorted x-coordinates: {coords['x_sorted']}")
+        print(f"  Sorted y-coordinates: {coords['y_sorted']}\n")
 
     # Display the camera feed
     cv2.imshow("Multi-Person Arm Node Detection", frame)
