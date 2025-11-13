@@ -1,82 +1,74 @@
 import cv2
 from ultralytics import YOLO
 
-# Load YOLOv8 Pose model
-model = YOLO("yolov8s-pose.pt")
-
-def detect_arms(frame):
-    """
-    Runs YOLOv8 pose detection on a given frame and returns the annotated frame
-    plus per-person sorted coordinate data.
-    """
-    results = model(frame, verbose=False)
-    annotated = frame.copy()
-    person_coords = []
-
-    for r in results:
-        if r.keypoints is None:
-            continue
-
-        keypoints = r.keypoints.xy
-        for person in keypoints:
-            x_coords, y_coords = [], []
-            indices = [5, 6, 7, 8, 9, 10]  # arm keypoints
-
-            # Collect coordinates
-            for i in indices:
-                x = float(person[i][0])
-                y = float(person[i][1])
-                x_coords.append(x)
-                y_coords.append(y)
-
-            person_coords.append({
-                "x_sorted": sorted(x_coords),
-                "y_sorted": sorted(y_coords)
-            })
-
-            # Convert to integer tuples
-            L_shoulder = tuple(person[5].int().tolist())
-            R_shoulder = tuple(person[6].int().tolist())
-            L_elbow = tuple(person[7].int().tolist())
-            R_elbow = tuple(person[8].int().tolist())
-            L_wrist = tuple(person[9].int().tolist())
-            R_wrist = tuple(person[10].int().tolist())
-
-            # Midpoint between shoulders
-            mid_shoulder = (
-                int((L_shoulder[0] + R_shoulder[0]) / 2),
-                int((L_shoulder[1] + R_shoulder[1]) / 2)
-            )
-
-            # ---- Drawing section ----
-            node_color = (60, 255, 100)  # soft green aesthetic
-            line_color = (255, 0, 0)     # blue for arm lines
-            node_radius = 6
-            line_thickness = 3
-
-            # Draw lines for both arms
-            cv2.line(annotated, mid_shoulder, L_elbow, line_color, line_thickness)
-            cv2.line(annotated, L_elbow, L_wrist, line_color, line_thickness)
-            cv2.line(annotated, mid_shoulder, R_elbow, line_color, line_thickness)
-            cv2.line(annotated, R_elbow, R_wrist, line_color, line_thickness)
-
-            # Draw nodes (all same color + size)
-            for point in [mid_shoulder, L_elbow, L_wrist, R_elbow, R_wrist]:
-                cv2.circle(annotated, point, node_radius, node_color, -1)
-
-    return annotated, person_coords
+from freq_processing import update_audio_from_pose, pose_to_waveform
+from plotter import update_plot
 
 
-# ---- Optional standalone preview ----
-if __name__ == "__main__":
+def start_pose_detection():
+    model = YOLO("yolov8s-pose.pt")
     cap = cv2.VideoCapture(0)
+
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
-        annotated, coords = detect_arms(frame)
-        cv2.imshow("Pose Detect Test", annotated)
-        if cv2.waitKey(5) & 0xFF == 27:
+
+        results = model(frame, verbose=False)
+
+        waves_this_frame = []
+        audio_set = False
+
+        for r in results:
+            if r.keypoints is None:
+                continue
+
+            keypoints = r.keypoints.xy
+
+            for person in keypoints:
+                L_shoulder = tuple(person[5].int().tolist())
+                R_shoulder = tuple(person[6].int().tolist())
+                L_elbow    = tuple(person[7].int().tolist())
+                R_elbow    = tuple(person[8].int().tolist())
+                L_wrist    = tuple(person[9].int().tolist())
+                R_wrist    = tuple(person[10].int().tolist())
+
+                mid = (
+                    int((L_shoulder[0] + R_shoulder[0]) / 2),
+                    int((L_shoulder[1] + R_shoulder[1]) / 2)
+                )
+
+                cv2.circle(frame, mid, 10, (0, 255, 255), -1)
+                cv2.line(frame, mid, L_elbow, (255, 0, 0), 3)
+                cv2.line(frame, L_elbow, L_wrist, (255, 0, 0), 3)
+                cv2.line(frame, mid, R_elbow, (255, 0, 0), 3)
+                cv2.line(frame, R_elbow, R_wrist, (255, 0, 0), 3)
+
+                for p in [L_elbow, L_wrist, R_elbow, R_wrist]:
+                    cv2.circle(frame, p, 6, (0, 255, 0), -1)
+
+                pts = [
+                    L_wrist,
+                    L_elbow,
+                    mid,
+                    R_elbow,
+                    R_wrist
+                ]
+                pts = [tuple(map(float, p)) for p in pts]
+
+                wave, freq = pose_to_waveform(pts)
+                waves_this_frame.append(wave)
+
+                if not audio_set:
+                    update_audio_from_pose(pts)
+                    audio_set = True
+
+        if waves_this_frame:
+            update_plot(waves_this_frame)
+
+        cv2.imshow("Multi-Person Arm Node Detection", frame)
+        if cv2.waitKey(1) & 0xFF == 27:
             break
+
     cap.release()
     cv2.destroyAllWindows()

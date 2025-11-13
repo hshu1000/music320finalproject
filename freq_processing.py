@@ -1,86 +1,103 @@
 import numpy as np
-from scipy import signal
 import sounddevice as sd
+from scipy.signal import resample
+import threading
+
+FS = 44100
+MIN_FREQ = 261.62
+
+current_period = np.zeros(512, dtype=np.float32)
+current_idx = 0
+lock = threading.Lock()
+stream = None
 
 
-class Synthesizer:
-    def __init__(self, sample_rate=48000):
-        self.sample_rate = sample_rate
+def pose_to_waveform(keypoints):
+    pts = np.array(keypoints, dtype=float)
+    center = pts[2]
+    rel = pts - center
+    rel = rel[np.argsort(rel[:, 0])]
+
+    xs = rel[:, 0]
+    ys = -rel[:, 1]
+    ys = ys / (np.max(np.abs(ys)) + 1e-9)
+
+    dx = np.abs(np.diff(xs))
+    t = np.concatenate([[0], np.cumsum(dx)])
+    if t[-1] < 1e-6:
+        t = np.linspace(0, 1, len(xs))
+
+    L = max(int(t[-1] * 20), 10)
+    tu = np.linspace(0, t[-1], L)
+    wave = np.interp(tu, t, ys).astype(np.float32)
+
+    raw_width = float(t[-1])
+    alpha = 0.4
+    scaled = raw_width**alpha
+
+    BASE = 440.0
+    SCALE = 30.0
+
+    freq = BASE / (1.0 + scaled / SCALE)
+    freq = float(np.clip(freq, MIN_FREQ, 2000.0))
+
+    return wave, freq
 
 
-    def additive_synth_helper(self, freqs, amps, phases, duration):
-        t = np.linspace(0, duration, int(self.sample_rate * duration), endpoint=False)
-        waveform = np.zeros_like(t)
-
-        for f, a, p in zip(freqs, amps, phases):
-            waveform += a * np.sin(2 * np.pi * f * t + p)
-
-        waveform /= np.max(np.abs(waveform) + 1e-12)
-        return waveform.astype(np.float32)
+def _wave_to_period(wave, freq):
+    freq = float(np.clip(freq, MIN_FREQ, 2000.0))
+    ps = max(32, int(FS / freq))
+    p = resample(wave, ps).astype(np.float32)
+    p /= (np.max(np.abs(p)) + 1e-6)
+    p *= 0.3
+    return p
 
 
-    def additive_synth(self, X, original_length, duration):
-        freqs = np.fft.rfftfreq(original_length, d=1 / self.sample_rate)
+def audio_callback(outdata, frames, time, status):
+    global current_period, current_idx
 
-        amps = (2.0 / original_length) * np.abs(X)
-        amps[0] /= 2.0 
-        if original_length % 2 == 0:
-            amps[-1] /= 2.0
+    with lock:
+        p = current_period
+        idx = current_idx
 
-        phases = np.angle(X)
+    n = len(p)
+    if n == 0:
+        outdata[:] = 0
+        return
 
-        return self.additive_synth_helper(freqs, amps, phases, duration)
+    out = np.empty(frames, dtype=np.float32)
+    for i in range(frames):
+        out[i] = p[idx]
+        idx += 1
+        if idx >= n:
+            idx = 0
 
+    with lock:
+        current_idx = idx
 
-    def lowpass_filter(self, data, cutoff_hz, order=4):
-        nyq = 0.5 * self.sample_rate
-        b, a = signal.butter(order, cutoff_hz / nyq, btype='low')
-        return signal.lfilter(b, a, data).astype(np.float32)
-
-
-    def highpass_filter(self, data, cutoff_hz, order=4):
-        nyq = 0.5 * self.sample_rate
-        b, a = signal.butter(order, cutoff_hz / nyq, btype='high')
-        return signal.lfilter(b, a, data).astype(np.float32)
-
-
-    def bandpass_filter(self, data, low, high, order=4):
-        nyq = 0.5 * self.sample_rate
-        b, a = signal.butter(order, [low / nyq, high / nyq], btype='band')
-        return signal.lfilter(b, a, data).astype(np.float32)
+    outdata[:, 0] = out
 
 
-    def distortion_effect(self, data, drive=1.0):
-        return np.tanh(drive * data).astype(np.float32)
+def start_audio_thread():
+    global stream
+    if stream is not None:
+        return
+    stream = sd.OutputStream(
+        channels=1,
+        samplerate=FS,
+        callback=audio_callback,
+        blocksize=512,
+        dtype='float32'
+    )
+    stream.start()
 
 
-    def reverb_effect(self, data, decay=0.5, delay_ms=50):
-        delay_samples = int(self.sample_rate * delay_ms / 1000)
-        if delay_samples <= 0:
-            return data
+def update_audio_from_pose(keypoints):
+    global current_period, current_idx
+    wave, freq = pose_to_waveform(keypoints)
+    p = _wave_to_period(wave, freq)
 
-        out = np.copy(data)
-        for i in range(delay_samples, len(out)):
-            out[i] += decay * out[i - delay_samples]
-
-        out /= np.max(np.abs(out) + 1e-12)
-        return out.astype(np.float32)
-
-
-def main():
-    synth = Synthesizer(sample_rate=8000)
-
-    t = np.linspace(0, 1, synth.sample_rate, endpoint=False)
-    original_waveform = np.sin(2*np.pi*440*t) + 0.5*np.sin(2*np.pi*2200*t)
-
-    X = np.fft.rfft(original_waveform)
-    N = len(original_waveform)
-
-    output = synth.additive_synth(X, N, duration=3.0)
-
-    sd.play(output, samplerate=synth.sample_rate)
-    sd.wait()
-
-
-if __name__ == "__main__":
-    main()
+    with lock:
+        current_period = p
+        if current_idx >= len(p):
+            current_idx = 0
