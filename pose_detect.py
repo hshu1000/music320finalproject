@@ -4,49 +4,43 @@ from ultralytics import YOLO
 # Load YOLOv8 Pose model
 model = YOLO("yolov8s-pose.pt")
 
-# Start webcam
-cap = cv2.VideoCapture(0)
-
-while cap.isOpened():
-    ret, frame = cap.read()
-    if not ret:
-        break
-
+def detect_arms(frame):
+    """
+    Runs YOLOv8 pose detection on a given frame and returns the annotated frame
+    plus per-person sorted coordinate data.
+    """
     results = model(frame, verbose=False)
-
-    # store per-person coordinate lists
+    annotated = frame.copy()
     person_coords = []
 
     for r in results:
         if r.keypoints is None:
             continue
 
-        keypoints = r.keypoints.xy  # shape: (num_people, 17, 2)
+        keypoints = r.keypoints.xy
+        for person in keypoints:
+            x_coords, y_coords = [], []
+            indices = [5, 6, 7, 8, 9, 10]  # arm keypoints
 
-        for person_idx, person in enumerate(keypoints):
-            x_coords, y_coords = [], []  # x and y for this person
-
-            # Collect coordinates for arm keypoints
-            indices = [5, 6, 7, 8, 9, 10]  # L/R shoulder, elbow, wrist
+            # Collect coordinates
             for i in indices:
                 x = float(person[i][0])
                 y = float(person[i][1])
                 x_coords.append(x)
                 y_coords.append(y)
 
-            # Save this person's sorted lists
             person_coords.append({
                 "x_sorted": sorted(x_coords),
                 "y_sorted": sorted(y_coords)
             })
 
-            # Convert to int tuples for drawing
+            # Convert to integer tuples
             L_shoulder = tuple(person[5].int().tolist())
-            L_elbow    = tuple(person[7].int().tolist())
-            L_wrist    = tuple(person[9].int().tolist())
             R_shoulder = tuple(person[6].int().tolist())
-            R_elbow    = tuple(person[8].int().tolist())
-            R_wrist    = tuple(person[10].int().tolist())
+            L_elbow = tuple(person[7].int().tolist())
+            R_elbow = tuple(person[8].int().tolist())
+            L_wrist = tuple(person[9].int().tolist())
+            R_wrist = tuple(person[10].int().tolist())
 
             # Midpoint between shoulders
             mid_shoulder = (
@@ -54,30 +48,35 @@ while cap.isOpened():
                 int((L_shoulder[1] + R_shoulder[1]) / 2)
             )
 
-            # Draw mid-shoulder node
-            cv2.circle(frame, mid_shoulder, 10, (0, 255, 255), -1)
+            # ---- Drawing section ----
+            node_color = (60, 255, 100)  # soft green aesthetic
+            line_color = (255, 0, 0)     # blue for arm lines
+            node_radius = 6
+            line_thickness = 3
 
-            # Draw arm lines
-            cv2.line(frame, mid_shoulder, L_elbow, (255, 0, 0), 3)
-            cv2.line(frame, L_elbow, L_wrist, (255, 0, 0), 3)
-            cv2.line(frame, mid_shoulder, R_elbow, (255, 0, 0), 3)
-            cv2.line(frame, R_elbow, R_wrist, (255, 0, 0), 3)
+            # Draw lines for both arms
+            cv2.line(annotated, mid_shoulder, L_elbow, line_color, line_thickness)
+            cv2.line(annotated, L_elbow, L_wrist, line_color, line_thickness)
+            cv2.line(annotated, mid_shoulder, R_elbow, line_color, line_thickness)
+            cv2.line(annotated, R_elbow, R_wrist, line_color, line_thickness)
 
-            # Draw joint nodes
-            for point in [L_elbow, L_wrist, R_elbow, R_wrist]:
-                cv2.circle(frame, point, 6, (0, 255, 0), -1)
+            # Draw nodes (all same color + size)
+            for point in [mid_shoulder, L_elbow, L_wrist, R_elbow, R_wrist]:
+                cv2.circle(annotated, point, node_radius, node_color, -1)
 
-    # Print each person's coordinate lists
-    for i, coords in enumerate(person_coords, start=1):
-        print(f"Person {i}:")
-        print(f"  Sorted x-coordinates: {coords['x_sorted']}")
-        print(f"  Sorted y-coordinates: {coords['y_sorted']}\n")
+    return annotated, person_coords
 
-    # Display the camera feed
-    cv2.imshow("Multi-Person Arm Node Detection", frame)
 
-    if cv2.waitKey(5) & 0xFF == 27:  # ESC to quit
-        break
-
-cap.release()
-cv2.destroyAllWindows()
+# ---- Optional standalone preview ----
+if __name__ == "__main__":
+    cap = cv2.VideoCapture(0)
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+        annotated, coords = detect_arms(frame)
+        cv2.imshow("Pose Detect Test", annotated)
+        if cv2.waitKey(5) & 0xFF == 27:
+            break
+    cap.release()
+    cv2.destroyAllWindows()
