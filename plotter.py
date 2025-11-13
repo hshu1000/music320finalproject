@@ -48,30 +48,37 @@ def rebuild_layout(n):
 
 def update_plot(wave_list):
     global fig, num_people
-
     if fig is None:
         return
 
     n = len(wave_list)
-
     if n != num_people:
         rebuild_layout(n)
 
+    MAX_FFT = 4000
+
     for i, wave in enumerate(wave_list):
         wave = np.asarray(wave, dtype=float)
-        if len(wave) == 0:
+        if len(wave) < 8:
             continue
 
+        wave = wave - np.mean(wave)
+
+        # waveform plot
         x = np.arange(len(wave))
         lines_wave[i].set_xdata(x)
         lines_wave[i].set_ydata(wave)
         axes_wave[i].relim()
         axes_wave[i].autoscale_view()
 
+        # FFT of audio period (correct)
         fft_vals = np.abs(np.fft.rfft(wave))
         freqs = np.fft.rfftfreq(len(wave), 1/44100)
-        lines_fft[i].set_xdata(freqs)
-        lines_fft[i].set_ydata(fft_vals)
+
+        # show up to 8 kHz
+        mask = freqs <= MAX_FFT
+        lines_fft[i].set_xdata(freqs[mask])
+        lines_fft[i].set_ydata(fft_vals[mask])
         axes_fft[i].relim()
         axes_fft[i].autoscale_view()
 
