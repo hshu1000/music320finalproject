@@ -6,10 +6,12 @@ import threading
 FS = 44100
 MIN_FREQ = 261.62
 
-current_period = np.zeros(512, dtype=np.float32)
-current_idx = 0
 lock = threading.Lock()
 stream = None
+
+# multiple voices: one period + phase per person
+periods = []   # list of np.ndarray (float32)
+phases = []    # list of ints
 
 
 def pose_to_waveform(keypoints):
@@ -53,29 +55,58 @@ def _wave_to_period(wave, freq):
     return p
 
 
-def audio_callback(outdata, frames, time, status):
-    global current_period, current_idx
+def update_audio_from_multiple(wave_freq_list):
+    global periods, phases
+
+    new_periods = []
+    for wave, freq in wave_freq_list:
+        p = _wave_to_period(wave, freq)
+        if len(p) > 0:
+            new_periods.append(p)
 
     with lock:
-        p = current_period
-        idx = current_idx
+        periods = new_periods
+        phases = [0] * len(new_periods)
 
-    n = len(p)
-    if n == 0:
-        outdata[:] = 0
+
+def update_audio_from_pose(keypoints):
+    wave, freq = pose_to_waveform(keypoints)
+    update_audio_from_multiple([(wave, freq)])
+
+
+def audio_callback(outdata, frames, time, status):
+    global periods, phases
+
+    with lock:
+        local_periods = periods
+        local_phases = phases.copy()
+
+    nvoices = len(local_periods)
+    if nvoices == 0:
+        outdata[:] = 0.0
         return
 
-    out = np.empty(frames, dtype=np.float32)
-    for i in range(frames):
-        out[i] = p[idx]
-        idx += 1
-        if idx >= n:
-            idx = 0
+    out = np.zeros(frames, dtype=np.float32)
+
+    for v, p in enumerate(local_periods):
+        L = len(p)
+        if L == 0:
+            continue
+        phase = local_phases[v]
+        idxs = (np.arange(frames) + phase) % L
+        out += p[idxs]
+        local_phases[v] = (phase + frames) % L
+
+    out /= max(1, nvoices)
+    max_abs = np.max(np.abs(out)) + 1e-6
+    out = 0.3 * out / max_abs
 
     with lock:
-        current_idx = idx
+        phases = local_phases
 
     outdata[:, 0] = out
+    if outdata.shape[1] > 1:
+        outdata[:, 1] = out
 
 
 def start_audio_thread():
@@ -90,14 +121,3 @@ def start_audio_thread():
         dtype='float32'
     )
     stream.start()
-
-
-def update_audio_from_pose(keypoints):
-    global current_period, current_idx
-    wave, freq = pose_to_waveform(keypoints)
-    p = _wave_to_period(wave, freq)
-
-    with lock:
-        current_period = p
-        if current_idx >= len(p):
-            current_idx = 0

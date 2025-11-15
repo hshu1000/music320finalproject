@@ -1,7 +1,7 @@
 import cv2
 from ultralytics import YOLO
 
-from freq_processing import update_audio_from_pose, pose_to_waveform
+from freq_processing import update_audio_from_multiple, pose_to_waveform, _wave_to_period
 from plotter import update_plot
 
 
@@ -17,7 +17,6 @@ def start_pose_detection():
         results = model(frame, verbose=False)
 
         waves_this_frame = []
-        audio_set = False
 
         for r in results:
             if r.keypoints is None:
@@ -57,14 +56,17 @@ def start_pose_detection():
                 pts = [tuple(map(float, p)) for p in pts]
 
                 wave, freq = pose_to_waveform(pts)
-                waves_this_frame.append(wave)
-
-                if not audio_set:
-                    update_audio_from_pose(pts)
-                    audio_set = True
+                waves_this_frame.append((wave, freq))
 
         if waves_this_frame:
-            update_plot(waves_this_frame)
+            update_audio_from_multiple(waves_this_frame)
+            processed = []
+            for wave, freq in waves_this_frame:
+                period = _wave_to_period(wave, freq)
+                processed.append(period)
+
+            update_plot(processed)
+
 
         cv2.imshow("Multi-Person Arm Node Detection", frame)
         if cv2.waitKey(1) & 0xFF == 27:
