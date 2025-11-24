@@ -14,6 +14,9 @@ def start_pose_detection():
         if not ret:
             break
 
+        # Fix mirrored webcam feed
+        frame = cv2.flip(frame, 1)
+        
         results = model(frame, verbose=False)
 
         waves_this_frame = []
