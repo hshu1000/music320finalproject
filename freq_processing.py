@@ -2,9 +2,10 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import resample
 import threading
+from synthesizer import Synthesizer
 
 FS = 44100
-MIN_FREQ = 261.62
+MIN_FREQ = 261.62  # C4
 
 lock = threading.Lock()
 stream = None
@@ -15,7 +16,17 @@ phases = []    # list of ints
 
 
 def pose_to_waveform(keypoints):
-    pts = np.array(keypoints, dtype=float)
+    # Extract metadata from the end of the list (if present)
+    # Metadata is stored as a tuple and should not be used for waveform generation
+    if len(keypoints) > 0 and isinstance(keypoints[-1], tuple):
+        # Last element is metadata tuple, extract it
+        metadata = keypoints[-1]
+        pts = np.array(keypoints[:-1], dtype=float)
+    else:
+        # No metadata, use all points
+        metadata = None
+        pts = np.array(keypoints, dtype=float)
+    
     center = pts[2]
     rel = pts - center
     rel = rel[np.argsort(rel[:, 0])]

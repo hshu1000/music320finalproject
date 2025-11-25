@@ -8,6 +8,7 @@ lines_wave = []
 lines_fft = []
 num_people = 0
 
+
 def init_plot():
     global fig
     plt.ion()
@@ -15,6 +16,7 @@ def init_plot():
     fig.canvas.manager.set_window_title("Realtime Pose Synth Waveforms")
     fig.tight_layout()
     fig.show()
+
 
 def rebuild_layout(n):
     global fig, axes_wave, axes_fft, lines_wave, lines_fft, num_people
