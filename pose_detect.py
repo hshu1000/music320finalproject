@@ -1,189 +1,233 @@
 import cv2
 from ultralytics import YOLO
+import mediapipe as mp
 
 from freq_processing import update_audio_from_multiple, pose_to_waveform, _wave_to_period
 from plotter import update_plot
 
 
 def start_pose_detection():
-    model = YOLO("yolov8s-pose.pt")
+    # ------------------------------
+    # INITIAL SETUP
+    # ------------------------------
+    model_pose = YOLO("yolov8s-pose.pt")
+
+    mp_hands = mp.solutions.hands
+    hands = mp_hands.Hands(
+        max_num_hands=10,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+
     cap = cv2.VideoCapture(0)
 
+    # MODE TOGGLE
+    hand_mode = False  # False = arm mode, True = hand mode
+    # If keypress is unreliable, just manually set:
+    # hand_mode = True   # force hand mode
+    # hand_mode = False  # force arm mode
+
+    print("Press H to toggle HAND MODE / ARM MODE inside the OpenCV window.")
+
+    # ------------------------------
+    # MAIN LOOP
+    # ------------------------------
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Fix mirrored webcam feed
         frame = cv2.flip(frame, 1)
-        
-        results = model(frame, verbose=False)
-
         waves_this_frame = []
 
-        for r in results:
-            if r.keypoints is None:
-                continue
+        # --------------------------------------------------------
+        # MODE SWITCH
+        # --------------------------------------------------------
+        mode_txt = "HAND MODE" if hand_mode else "ARM MODE"
+        cv2.putText(frame, mode_txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
+                    1.0, (0, 255, 255), 2, cv2.LINE_AA)
 
-            keypoints = r.keypoints.xy
+        # --------------------------------------------------------
+        # HAND MODE
+        # --------------------------------------------------------
+        if hand_mode:
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            result = hands.process(rgb)
 
-            # Compute per-person overlay spacing based on number of detected people
-            num_people = len(keypoints) if keypoints is not None else 1
-            # Ensure a reasonable minimum spacing; scale with frame height so overlays fit
-            spacing = max(100, frame.shape[0] // max(1, num_people + 1))
+            if result.multi_hand_landmarks:
+                spacing = frame.shape[0] // (len(result.multi_hand_landmarks) + 1)
 
-            for pi, person in enumerate(keypoints):
-                L_shoulder = tuple(person[5].int().tolist())
-                R_shoulder = tuple(person[6].int().tolist())
-                L_elbow    = tuple(person[7].int().tolist())
-                R_elbow    = tuple(person[8].int().tolist())
-                L_wrist    = tuple(person[9].int().tolist())
-                R_wrist    = tuple(person[10].int().tolist())
+                for i, handLm in enumerate(result.multi_hand_landmarks):
+                    # fingertip indices
+                    TIP_IDXS = [4, 8, 12, 16, 20]  # thumb & fingertips
 
-                mid = (
-                    int((L_shoulder[0] + R_shoulder[0]) / 2),
-                    int((L_shoulder[1] + R_shoulder[1]) / 2)
-                )
-                # draw shoulder-mid
-                cv2.circle(frame, mid, 10, (0, 255, 255), -1)
+                    pts = []
+                    for idx in TIP_IDXS:
+                        lm = handLm.landmark[idx]
+                        x = int(lm.x * frame.shape[1])
+                        y = int(lm.y * frame.shape[0])
+                        pts.append((float(x), float(y)))
+                        cv2.circle(frame, (x, y), 8, (0, 200, 255), -1)
 
-                # helper to interpolate a point between a and b
-                def interp(a, b, t=0.5):
-                    return (int(a[0] + (b[0] - a[0]) * t), int(a[1] + (b[1] - a[1]) * t))
+                    # draw fingertip connections (simple chain)
+                    for a, b in zip(pts[:-1], pts[1:]):
+                        cv2.line(frame,
+                                 (int(a[0]), int(a[1])),
+                                 (int(b[0]), int(b[1])),
+                                 (255, 150, 0), 2)
 
-                # compute extra points along each arm: upper-arm mid (between shoulder-mid and elbow)
-                # and forearm mid (between elbow and wrist). This increases control resolution.
-                L_upper_mid = interp(mid, L_elbow, 0.5)
-                L_forearm_mid = interp(L_elbow, L_wrist, 0.5)
-                R_upper_mid = interp(mid, R_elbow, 0.5)
-                R_forearm_mid = interp(R_elbow, R_wrist, 0.5)
+                    # add metadata for vertical control (similar to arm mode)
+                    avg_y = sum(p[1] for p in pts) / len(pts)
+                    metadata = (avg_y, frame.shape[0])
+                    pts_with_metadata = pts + [metadata]
 
-                # draw skeleton lines and points (including the new interpolated points)
-                cv2.line(frame, mid, L_elbow, (255, 0, 0), 3)
-                cv2.line(frame, L_elbow, L_wrist, (255, 0, 0), 3)
-                cv2.line(frame, mid, R_elbow, (255, 0, 0), 3)
-                cv2.line(frame, R_elbow, R_wrist, (255, 0, 0), 3)
+                    wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
+                    waves_this_frame.append((filtered_wave, freq, wave))
 
-                for p in [L_elbow, L_wrist, R_elbow, R_wrist]:
-                    cv2.circle(frame, p, 6, (0, 255, 0), -1)
+                    # overlay like in arm mode
+                    overlay_y = 60 + i * spacing
+                    overlay_lines(frame, i, cutoff, norm, avg_y, overlay_y)
 
-                # show interpolated points in a different color
-                for p in [L_upper_mid, L_forearm_mid, R_upper_mid, R_forearm_mid]:
-                    cv2.circle(frame, p, 5, (0, 128, 255), -1)
+        # --------------------------------------------------------
+        # ARM MODE
+        # --------------------------------------------------------
+        else:
+            results = model_pose(frame, verbose=False)
 
-                # build the point list including extra points. Convert to floats for downstream processing.
-                pts = [
-                    L_wrist,
-                    L_forearm_mid,
-                    L_elbow,
-                    L_upper_mid,
-                    mid,
-                    R_upper_mid,
-                    R_elbow,
-                    R_forearm_mid,
-                    R_wrist
-                ]
-                pts = [tuple(map(float, p)) for p in pts]
+            for r in results:
+                if r.keypoints is None:
+                    continue
 
-                # Sort points by x-coordinate (left to right) to ensure lines don't overlap when tiled
-                pts_sorted = sorted(pts, key=lambda p: p[0])
+                pts_per_person = r.keypoints.xy
+                num_people = len(pts_per_person)
+                spacing = max(100, frame.shape[0] // (num_people + 1))
 
-                # Draw connecting lines in sorted x-order
-                for i in range(len(pts_sorted) - 1):
-                    p1 = (int(pts_sorted[i][0]), int(pts_sorted[i][1]))
-                    p2 = (int(pts_sorted[i+1][0]), int(pts_sorted[i+1][1]))
-                    cv2.line(frame, p1, p2, (200, 200, 0), 2)
+                for pi, person in enumerate(pts_per_person):
 
-                # Compute metadata: average y-coordinate of all points
-                avg_y = sum(p[1] for p in pts_sorted) / len(pts_sorted)
+                    # shoulder, elbow, wrist
+                    Ls = tuple(person[5].int().tolist())
+                    Rs = tuple(person[6].int().tolist())
+                    Le = tuple(person[7].int().tolist())
+                    Re = tuple(person[8].int().tolist())
+                    Lw = tuple(person[9].int().tolist())
+                    Rw = tuple(person[10].int().tolist())
 
-                # include actual frame height so downstream mapping isn't guessed
-                frame_h = frame.shape[0]
+                    arm_joints = [Le, Re, Lw, Rw]
+                    for (x, y) in arm_joints:
+                        cv2.circle(frame, (x, y), 8, (0, 255, 0), -1)
 
-                # Append metadata tuple to the end of pts_sorted: (avg_y, frame_height)
-                metadata = (avg_y, frame_h)
-                pts_with_metadata = list(pts_sorted) + [metadata]
+                    mid = (int((Ls[0] + Rs[0]) / 2), int((Ls[1] + Rs[1]) / 2))
+                    cv2.circle(frame, mid, 10, (0, 255, 255), -1)
 
-                # pose_to_waveform now returns (original_wave, freq, filtered_wave, cutoff, norm)
-                wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
+                    def interp(a, b, t=0.5):
+                        return (int(a[0] + (b[0] - a[0]) * t),
+                                int(a[1] + (b[1] - a[1]) * t))
 
-                # For audio, use the filtered waveform; for plotting keep both
-                waves_this_frame.append((filtered_wave, freq, wave))
+                    L_um = interp(mid, Le, 0.5)
+                    L_fm = interp(Le, Lw, 0.5)
+                    R_um = interp(mid, Re, 0.5)
+                    R_fm = interp(Re, Rw, 0.5)
 
-                # Draw an on-screen overlay showing the cutoff and normalized control value
-                # Offset vertically by person index so multiple people don't overlap
-                try:
-                    overlay_x = 10
-                    overlay_y = 30 + pi * spacing
-                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    basic_pts = [
+                        Lw, L_fm, Le, L_um, mid,
+                        R_um, Re, R_fm, Rw
+                    ]
+                    pts = sorted([tuple(map(float, p)) for p in basic_pts], key=lambda p: p[0])
 
-                    # Prepare lines and font parameters
-                    title = f"Person {pi+1}"
-                    line1 = f"Cutoff: {cutoff:.0f} Hz"
-                    line2 = f"Norm: {norm:.2f}"
-                    line3 = f"AvgY: {avg_y:.1f}"
-                    lines = [title, line1, line2, line3]
-                    scales = [0.7, 0.7, 0.6, 0.6]
-                    thicks = [2, 2, 1, 1]
+                    # draw connections
+                    for a, b in zip(pts[:-1], pts[1:]):
+                        cv2.line(frame,
+                                 (int(a[0]), int(a[1])),
+                                 (int(b[0]), int(b[1])),
+                                 (200, 200, 0), 2)
 
-                    # Measure text sizes to compute rectangle size
-                    widths = []
-                    heights = []
-                    baselines = []
-                    for txt, sc, th in zip(lines, scales, thicks):
-                        (w, h), base = cv2.getTextSize(txt, font, sc, th)
-                        widths.append(w)
-                        heights.append(h)
-                        baselines.append(base)
+                    # metadata
+                    avg_y = sum(p[1] for p in pts) / len(pts)
+                    pts_with_metadata = pts + [(avg_y, frame.shape[0])]
 
-                    max_w = max(widths)
-                    total_h = sum(heights) + (len(lines) - 1) * 6
+                    wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
+                    waves_this_frame.append((filtered_wave, freq, wave))
 
-                    # Rectangle coordinates (with padding)
-                    pad_x = 10
-                    pad_y = 8
-                    rx1 = max(0, overlay_x - pad_x)
-                    ry1 = max(0, overlay_y - pad_y - heights[0])
-                    rw = max_w + pad_x * 2
-                    rh = total_h + pad_y * 2
-                    rx2 = min(frame.shape[1], rx1 + rw)
-                    ry2 = min(frame.shape[0], ry1 + rh)
+                    overlay_y = 60 + pi * spacing
+                    overlay_lines(frame, pi, cutoff, norm, avg_y, overlay_y)
 
-                    # Draw semi-transparent rectangle by blending an overlay
-                    overlay = frame.copy()
-                    cv2.rectangle(overlay, (rx1, ry1), (rx2, ry2), (0, 0, 0), -1)
-                    alpha = 0.45
-                    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
-
-                    # Draw each text line over the blended rectangle
-                    y = ry1 + pad_y + heights[0]
-                    for i, txt in enumerate(lines):
-                        sc = scales[i]
-                        th = thicks[i]
-                        color = (50, 220, 255) if i == 0 else (0, 200, 255)
-                        cv2.putText(frame, txt, (overlay_x, y), font, sc, color, th, cv2.LINE_AA)
-                        y += heights[i] + 6
-                except Exception:
-                    pass
-
+        # --------------------------------------------------------
+        # AUDIO + PLOTTING
+        # --------------------------------------------------------
         if waves_this_frame:
-            # waves_this_frame entries: (filtered_wave, freq, original_wave)
             audio_list = [(fw, f) for (fw, f, ow) in waves_this_frame]
             update_audio_from_multiple(audio_list)
 
             processed = []
             for (fw, f, ow) in waves_this_frame:
-                orig_period = _wave_to_period(ow, f)
-                filt_period = _wave_to_period(fw, f)
-                # pass tuple (original, filtered) so plotter can draw both
-                processed.append((orig_period, filt_period))
+                orig = _wave_to_period(ow, f)
+                filt = _wave_to_period(fw, f)
+                processed.append((orig, filt))
 
             update_plot(processed)
 
+        # --------------------------------------------------------
+        # DISPLAY + KEYPRESS
+        # --------------------------------------------------------
+        cv2.imshow("Multi-Person Detection (Arms / Hands)", frame)
 
-        cv2.imshow("Multi-Person Arm Node Detection", frame)
-        if cv2.waitKey(1) & 0xFF == 27:
+        # NOTE: must be AFTER imshow and inside OpenCV window focus
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('h'):
+            hand_mode = not hand_mode
+            print("Toggled mode:", "HAND MODE" if hand_mode else "ARM MODE")
+
+        if key == 27:
             break
 
     cap.release()
     cv2.destroyAllWindows()
+
+
+# -----------------------------------------------------------
+# SMALL HELPER FUNCTION
+# -----------------------------------------------------------
+def overlay_lines(frame, pi, cutoff, norm, avg_y, overlay_y):
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    lines = [
+        f"Person {pi+1}",
+        f"Cutoff: {cutoff:.0f} Hz",
+        f"Norm: {norm:.2f}",
+        f"AvgY: {avg_y:.1f}",
+    ]
+    scales = [0.7, 0.7, 0.6, 0.6]
+    thicks = [2, 2, 1, 1]
+
+    widths = []
+    heights = []
+    bases = []
+    for txt, sc, th in zip(lines, scales, thicks):
+        (w, h), base = cv2.getTextSize(txt, font, sc, th)
+        widths.append(w)
+        heights.append(h)
+        bases.append(base)
+
+    max_w = max(widths)
+    total_h = sum(heights) + (len(lines) - 1) * 6
+
+    pad_x = 10
+    pad_y = 8
+
+    rx1 = 10
+    ry1 = max(0, overlay_y - pad_y - heights[0])
+    rw = max_w + pad_x * 2
+    rh = total_h + pad_y * 2
+    rx2 = min(frame.shape[1], rx1 + rw)
+    ry2 = min(frame.shape[0], ry1 + rh)
+
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (rx1, ry1), (rx2, ry2), (0, 0, 0), -1)
+    alpha = 0.45
+    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+    y = ry1 + pad_y + heights[0]
+    for i, txt in enumerate(lines):
+        color = (50, 220, 255) if i == 0 else (0, 200, 255)
+        cv2.putText(frame, txt, (rx1 + pad_x, y), font,
+                    scales[i], color, thicks[i], cv2.LINE_AA)
+        y += heights[i] + 6
