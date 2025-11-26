@@ -27,7 +27,12 @@ def start_pose_detection():
 
             keypoints = r.keypoints.xy
 
-            for person in keypoints:
+            # Compute per-person overlay spacing based on number of detected people
+            num_people = len(keypoints) if keypoints is not None else 1
+            # Ensure a reasonable minimum spacing; scale with frame height so overlays fit
+            spacing = max(100, frame.shape[0] // max(1, num_people + 1))
+
+            for pi, person in enumerate(keypoints):
                 L_shoulder = tuple(person[5].int().tolist())
                 R_shoulder = tuple(person[6].int().tolist())
                 L_elbow    = tuple(person[7].int().tolist())
@@ -92,19 +97,86 @@ def start_pose_detection():
                 # Compute metadata: average y-coordinate of all points
                 avg_y = sum(p[1] for p in pts_sorted) / len(pts_sorted)
 
-                # Append metadata tuple to the end of pts_sorted
-                metadata = (avg_y,)
+                # include actual frame height so downstream mapping isn't guessed
+                frame_h = frame.shape[0]
+
+                # Append metadata tuple to the end of pts_sorted: (avg_y, frame_height)
+                metadata = (avg_y, frame_h)
                 pts_with_metadata = list(pts_sorted) + [metadata]
 
-                wave, freq = pose_to_waveform(pts_with_metadata)
-                waves_this_frame.append((wave, freq))
+                # pose_to_waveform now returns (original_wave, freq, filtered_wave, cutoff, norm)
+                wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
+
+                # For audio, use the filtered waveform; for plotting keep both
+                waves_this_frame.append((filtered_wave, freq, wave))
+
+                # Draw an on-screen overlay showing the cutoff and normalized control value
+                # Offset vertically by person index so multiple people don't overlap
+                try:
+                    overlay_x = 10
+                    overlay_y = 30 + pi * spacing
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+
+                    # Prepare lines and font parameters
+                    title = f"Person {pi+1}"
+                    line1 = f"Cutoff: {cutoff:.0f} Hz"
+                    line2 = f"Norm: {norm:.2f}"
+                    line3 = f"AvgY: {avg_y:.1f}"
+                    lines = [title, line1, line2, line3]
+                    scales = [0.7, 0.7, 0.6, 0.6]
+                    thicks = [2, 2, 1, 1]
+
+                    # Measure text sizes to compute rectangle size
+                    widths = []
+                    heights = []
+                    baselines = []
+                    for txt, sc, th in zip(lines, scales, thicks):
+                        (w, h), base = cv2.getTextSize(txt, font, sc, th)
+                        widths.append(w)
+                        heights.append(h)
+                        baselines.append(base)
+
+                    max_w = max(widths)
+                    total_h = sum(heights) + (len(lines) - 1) * 6
+
+                    # Rectangle coordinates (with padding)
+                    pad_x = 10
+                    pad_y = 8
+                    rx1 = max(0, overlay_x - pad_x)
+                    ry1 = max(0, overlay_y - pad_y - heights[0])
+                    rw = max_w + pad_x * 2
+                    rh = total_h + pad_y * 2
+                    rx2 = min(frame.shape[1], rx1 + rw)
+                    ry2 = min(frame.shape[0], ry1 + rh)
+
+                    # Draw semi-transparent rectangle by blending an overlay
+                    overlay = frame.copy()
+                    cv2.rectangle(overlay, (rx1, ry1), (rx2, ry2), (0, 0, 0), -1)
+                    alpha = 0.45
+                    cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
+
+                    # Draw each text line over the blended rectangle
+                    y = ry1 + pad_y + heights[0]
+                    for i, txt in enumerate(lines):
+                        sc = scales[i]
+                        th = thicks[i]
+                        color = (50, 220, 255) if i == 0 else (0, 200, 255)
+                        cv2.putText(frame, txt, (overlay_x, y), font, sc, color, th, cv2.LINE_AA)
+                        y += heights[i] + 6
+                except Exception:
+                    pass
 
         if waves_this_frame:
-            update_audio_from_multiple(waves_this_frame)
+            # waves_this_frame entries: (filtered_wave, freq, original_wave)
+            audio_list = [(fw, f) for (fw, f, ow) in waves_this_frame]
+            update_audio_from_multiple(audio_list)
+
             processed = []
-            for wave, freq in waves_this_frame:
-                period = _wave_to_period(wave, freq)
-                processed.append(period)
+            for (fw, f, ow) in waves_this_frame:
+                orig_period = _wave_to_period(ow, f)
+                filt_period = _wave_to_period(fw, f)
+                # pass tuple (original, filtered) so plotter can draw both
+                processed.append((orig_period, filt_period))
 
             update_plot(processed)
 
