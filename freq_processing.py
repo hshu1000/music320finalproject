@@ -7,8 +7,8 @@ from synthesizer import Synthesizer
 
 FS = 44100
 # Allow a much wider frequency range (C2 up to several kHz)
-MIN_FREQ = 65.41   # C2 (~65.4 Hz)
-MAX_FREQ = min(8000.0, FS // 2 - 100.0)
+MIN_FREQ = 130.82   # C3
+MAX_FREQ = min(523.25, FS // 2 - 100.0)  # C5
 
 lock = threading.Lock()
 stream = None
@@ -67,16 +67,19 @@ def pose_to_waveform(keypoints):
     # Compute original spectrum (for reference/plotting)
     # X_orig = np.fft.rfft(wave)
 
-    raw_width = float(t[-1])
-    alpha = 0.4
-    scaled = raw_width**alpha
+    RAW_MIN = 500
+    RAW_MAX = 1500
 
-    # Map the scaled width to a perceptual frequency range using geometric interpolation
-    # so we can reach much lower and much higher frequencies.
-    SCALE = 30.0
-    v = scaled / (SCALE + scaled + 1e-12)
+    raw_width = float(t[-1])
+    norm = (RAW_MAX - raw_width) / (RAW_MAX - RAW_MIN)
+    norm = np.clip(norm, 0.0, 1.0)
+
+    gamma = 0.4  # tweak this for more/less sensitivity
+    v = norm ** gamma
+
     freq = float(MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** v))
     freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
+    # print(f"Computed freq: {freq:.2f} Hz from raw width: {raw_width:.4f}")
 
     # Determine cutoff frequency for lowpass based on avg_y
     # Make the effect more extreme: allow a very low MIN_CUTOFF and a high MAX_CUTOFF
