@@ -22,12 +22,10 @@ def start_pose_detection():
     cap = cv2.VideoCapture(0)
 
     # MODE TOGGLE
-    hand_mode = False  # False = arm mode, True = hand mode
+    hand_mode = True  # False = arm mode, True = hand mode
     # If keypress is unreliable, just manually set:
     # hand_mode = True   # force hand mode
     # hand_mode = False  # force arm mode
-
-    print("Press H to toggle HAND MODE / ARM MODE inside the OpenCV window.")
 
     # ------------------------------
     # MAIN LOOP
@@ -169,7 +167,7 @@ def start_pose_detection():
         # --------------------------------------------------------
         # DISPLAY + KEYPRESS
         # --------------------------------------------------------
-        cv2.imshow("Multi-Person Detection (Arms / Hands)", frame)
+        cv2.imshow("Hand/Arm Pose Detection", frame)
 
         # NOTE: must be AFTER imshow and inside OpenCV window focus
         key = cv2.waitKey(1) & 0xFF

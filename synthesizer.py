@@ -136,6 +136,8 @@ def main():
     t = np.linspace(0, 1, synth.sample_rate, endpoint=False)
     original_waveform = np.sin(2*np.pi*440*t) + 0.5*np.sin(2*np.pi*2200*t)
 
+    original_waveform = synth.lowpass_filter(original_waveform, cutoff_hz=1500.0)
+
     X = np.fft.rfft(original_waveform)
     N = len(original_waveform)
 

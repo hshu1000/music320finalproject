@@ -6,14 +6,14 @@ import threading
 from synthesizer import Synthesizer
 
 FS = 44100
-# Allow a much wider frequency range (C2 up to several kHz)
+# Define frequency range
 MIN_FREQ = 130.82   # C3
-MAX_FREQ = min(523.25, FS // 2 - 100.0)  # C5
+MAX_FREQ = min(2093, FS // 2 - 100.0)  # C7
 
 lock = threading.Lock()
 stream = None
 
-# multiple voices: one period + phase per person
+# Multiple voices: one period + phase per person
 periods = []   # list of np.ndarray (float32)
 phases = []    # list of ints
 
@@ -67,8 +67,8 @@ def pose_to_waveform(keypoints):
     # Compute original spectrum (for reference/plotting)
     # X_orig = np.fft.rfft(wave)
 
-    RAW_MIN = 500
-    RAW_MAX = 1500
+    RAW_MIN = 10
+    RAW_MAX = 1000
 
     raw_width = float(t[-1])
     norm = (RAW_MAX - raw_width) / (RAW_MAX - RAW_MIN)
@@ -79,7 +79,7 @@ def pose_to_waveform(keypoints):
 
     freq = float(MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** v))
     freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
-    # print(f"Computed freq: {freq:.2f} Hz from raw width: {raw_width:.4f}")
+    print(f"Computed freq: {freq:.2f} Hz from raw width: {raw_width:.4f}")
 
     # Determine cutoff frequency for lowpass based on avg_y
     # Make the effect more extreme: allow a very low MIN_CUTOFF and a high MAX_CUTOFF
@@ -118,8 +118,6 @@ def pose_to_waveform(keypoints):
     # Increase filter order and apply the filter twice for stronger attenuation.
     try:
         filtered_wave = synth.lowpass_filter(wave, cutoff_hz=cutoff, order=8)
-        # apply again for a steeper slope
-        filtered_wave = synth.lowpass_filter(filtered_wave, cutoff_hz=cutoff, order=8)
     except Exception:
         # Fall back to a single, safer filter if something goes wrong
         filtered_wave = synth.lowpass_filter(wave, cutoff_hz=cutoff)
