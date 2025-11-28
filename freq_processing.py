@@ -9,20 +9,20 @@ import math
 FS = 44100
 
 # Global musical scale (used for pitch quantization)
-CURRENT_SCALE = "C major"
+CURRENT_SCALE = 'C major'
 
 # Define pitch range
 MIN_FREQ = 65.41   # C2
-MAX_FREQ = min(2093, FS // 2 - 100.0)  # C7
+MAX_FREQ = min(1046.5, FS // 2 - 100.0)  # C6
 
 # Define filter cutoff ranges
 # Lowpass (controlled by avg_y)
-MIN_CUTOFF = 1079.0
+MIN_CUTOFF = (MIN_FREQ + MAX_FREQ) / 2
 MAX_CUTOFF = min(FS // 2 - 100.0, 4000.0)
 
 # Highpass (controlled by avg_x)
 HP_MIN_CUTOFF = 10.0
-HP_MAX_CUTOFF = min(FS // 2 - 100.0, 1079.0)
+HP_MAX_CUTOFF = min(FS // 2 - 100.0, (MIN_FREQ + MAX_FREQ) / 2)
 
 lock = threading.Lock()
 stream = None
@@ -69,24 +69,24 @@ def _midi_to_name(m):
     m_int = int(round(m))
     pc = m_int % 12
     octave = m_int // 12 - 1
-    return f"{_NOTE_NAMES[pc]}{octave}"
+    return f'{_NOTE_NAMES[pc]}{octave}'
 
 def _parse_scale_name(scale_name):
-    s = scale_name.strip().lower().replace(" ", "")
-    mode = "major"
-    if "major" in s:
-        mode = "major"
-        root_str = s.replace("major", "")
-    elif "minor" in s:
-        mode = "minor"
-        root_str = s.replace("minor", "")
+    s = scale_name.strip().lower().replace(' ', '')
+    mode = 'major'
+    if 'major' in s:
+        mode = 'major'
+        root_str = s.replace('major', '')
+    elif 'minor' in s:
+        mode = 'minor'
+        root_str = s.replace('minor', '')
     else:
         # default to major if mode not specified
         root_str = s
-        mode = "major"
+        mode = 'major'
 
-    root_str = root_str or "c"
-    root_str = root_str.replace("♯", "#").replace("♭", "b")
+    root_str = root_str or 'c'
+    root_str = root_str.replace('♯', '#').replace('♭', 'b')
 
     root_pc = _NOTE_TO_PC.get(root_str, 0)  # default C if unknown
     return root_pc, mode
@@ -94,7 +94,7 @@ def _parse_scale_name(scale_name):
 def _build_scale_classes(scale_name):
     root_pc, mode = _parse_scale_name(scale_name)
 
-    if mode == "minor":
+    if mode == 'minor':
         intervals = [0, 2, 3, 5, 7, 8, 10]  # natural minor
     else:
         intervals = [0, 2, 4, 5, 7, 9, 11]  # major
@@ -110,7 +110,7 @@ def quantize_frequency_to_scale(freq, scale_name):
 
     best_midi = orig_midi
     best_freq = freq
-    best_err = float("inf")
+    best_err = float('inf')
 
     # search all midi notes and keep ones in scale & within freq range
     for m in range(0, 128):
@@ -239,7 +239,7 @@ def pose_to_waveform(keypoints):
     # Return:
     #  wave           - raw period-shaped wave
     #  freq_q         - quantized pitch frequency
-    #  note_name      - note string like "C4"
+    #  note_name      - note string like 'C4'
     #  lp_cutoff      - lowpass cutoff (Hz)
     #  lp_bin_idx     - lowpass bin index (0..NUM_BINS-1)
     #  hp_cutoff      - highpass cutoff (Hz)
@@ -292,7 +292,7 @@ def update_audio_from_multiple(wave_freq_cutoff_list):
             lp_sos = signal.butter(4, lp_Wn, btype='low', output='sos')
             lp_zi = signal.sosfilt_zi(lp_sos) * 0.0
         except Exception as ex:
-            print(f"[update_audio_from_multiple] LP filter design failed: {ex}")
+            print(f'[update_audio_from_multiple] LP filter design failed: {ex}')
             lp_sos = None
             lp_zi = None
 
@@ -304,7 +304,7 @@ def update_audio_from_multiple(wave_freq_cutoff_list):
             hp_sos = signal.butter(4, hp_Wn, btype='high', output='sos')
             hp_zi = signal.sosfilt_zi(hp_sos) * 0.0
         except Exception as ex:
-            print(f"[update_audio_from_multiple] HP filter design failed: {ex}")
+            print(f'[update_audio_from_multiple] HP filter design failed: {ex}')
             hp_sos = None
             hp_zi = None
 
@@ -337,50 +337,28 @@ def update_audio_from_pose(keypoints):
 
 
 def audio_callback(outdata, frames, time, status):
-    global periods, phases, lp_sos_list, lp_zi_list, hp_sos_list, hp_zi_list
+    global periods, phases, lp_sos_list, lp_zi_list
 
     if status:
-        print(f"[audio] Status: {status}")
+        print(f'[audio] Status: {status}')
 
     try:
-        # Copy shared state under lock
+        # Take a complete snapshot of DSP state
         with lock:
             local_periods = list(periods)
             local_phases = phases.copy()
-
-            local_lp_sos_list = list(lp_sos_list)
-            local_lp_zi_list = [zi.copy() if zi is not None else None for zi in lp_zi_list]
-
-            local_hp_sos_list = list(hp_sos_list)
-            local_hp_zi_list = [zi.copy() if zi is not None else None for zi in hp_zi_list]
+            local_sos_list = list(lp_sos_list)
+            local_zi_list = [zi.copy() if zi is not None else None for zi in lp_zi_list]
 
         nvoices = len(local_periods)
 
-        # Align lengths for LP lists
-        if len(local_lp_sos_list) < nvoices:
-            for _ in range(nvoices - len(local_lp_sos_list)):
-                local_lp_sos_list.append(None)
-        elif len(local_lp_sos_list) > nvoices:
-            local_lp_sos_list = local_lp_sos_list[:nvoices]
-
-        if len(local_lp_zi_list) < nvoices:
-            for _ in range(nvoices - len(local_lp_zi_list)):
-                local_lp_zi_list.append(None)
-        elif len(local_lp_zi_list) > nvoices:
-            local_lp_zi_list = local_lp_zi_list[:nvoices]
-
-        # Align lengths for HP lists
-        if len(local_hp_sos_list) < nvoices:
-            for _ in range(nvoices - len(local_hp_sos_list)):
-                local_hp_sos_list.append(None)
-        elif len(local_hp_sos_list) > nvoices:
-            local_hp_sos_list = local_hp_sos_list[:nvoices]
-
-        if len(local_hp_zi_list) < nvoices:
-            for _ in range(nvoices - len(local_hp_zi_list)):
-                local_hp_zi_list.append(None)
-        elif len(local_hp_zi_list) > nvoices:
-            local_hp_zi_list = local_hp_zi_list[:nvoices]
+        # If any list length mismatch, then safely skip buffer
+        if not (
+            len(local_phases) == len(local_sos_list) ==
+            len(local_zi_list) == nvoices
+        ):
+            outdata[:] = 0.0
+            return
 
         if nvoices == 0:
             outdata[:] = 0.0
@@ -388,68 +366,59 @@ def audio_callback(outdata, frames, time, status):
 
         out = np.zeros(frames, dtype=np.float32)
 
-        for v, p in enumerate(local_periods):
+        # Process voices safely
+        for v in range(nvoices):
             try:
-                p = np.asarray(p, dtype=np.float32)
+                p = np.asarray(local_periods[v], dtype=np.float32)
                 L = len(p)
                 if L == 0:
                     continue
 
-                phase = int(local_phases[v]) if v < len(local_phases) else 0
+                phase = int(local_phases[v])
                 idxs = (np.arange(frames) + phase) % L
                 voice = p[idxs]
 
-                # Apply per-voice lowpass filter in real time
-                lp_sos = local_lp_sos_list[v]
-                lp_zi = local_lp_zi_list[v]
-                if lp_sos is not None and lp_zi is not None:
-                    try:
-                        voice, local_lp_zi_list[v] = signal.sosfilt(lp_sos, voice, zi=lp_zi)
-                    except Exception as ex:
-                        print(f"[audio_callback] LP sosfilt failed for voice {v}: {ex}")
+                sos = local_sos_list[v]
+                zi = local_zi_list[v]
 
-                # Apply per-voice highpass filter in real time
-                hp_sos = local_hp_sos_list[v]
-                hp_zi = local_hp_zi_list[v]
-                if hp_sos is not None and hp_zi is not None:
-                    try:
-                        voice, local_hp_zi_list[v] = signal.sosfilt(hp_sos, voice, zi=hp_zi)
-                    except Exception as ex:
-                        print(f"[audio_callback] HP sosfilt failed for voice {v}: {ex}")
+                if sos is not None and zi is not None:
+                    voice, local_zi_list[v] = signal.sosfilt(sos, voice, zi=zi)
 
                 out += voice
                 local_phases[v] = int((phase + frames) % L)
 
             except Exception as ex:
-                print(f"[audio_callback] voice {v} skipped: {ex}")
+                print(f'[audio_callback] voice {v} skipped: {ex}')
                 continue
 
-        # Rough normalization across voices
+        # Volume normalization
         if nvoices > 1:
             out /= np.sqrt(nvoices)
 
-        # Peak-limit (don't amplify quiet signals)
         desired_peak = 0.3
         peak = np.max(np.abs(out)) + 1e-9
         if peak > desired_peak:
             out *= (desired_peak / peak)
 
-        # Write to output buffer
+        # Write to output
         if outdata.ndim == 1:
             outdata[:] = out
         else:
-            nch = outdata.shape[1]
-            for ch in range(nch):
+            for ch in range(outdata.shape[1]):
                 outdata[:, ch] = out
 
-        # Write back updated phase and filter states
+        # Write DSP state safely
         with lock:
-            phases = local_phases
-            lp_zi_list = local_lp_zi_list
-            hp_zi_list = local_hp_zi_list
+            # Only write back if lengths STILL match
+            if (
+                len(phases) == nvoices and
+                len(lp_zi_list) == nvoices
+            ):
+                phases = local_phases
+                lp_zi_list = local_zi_list
 
     except Exception as e:
-        print(f"[audio_callback] Error: {e}")
+        print(f'[audio_callback] Error: {e}')
         outdata[:] = 0.0
 
 
