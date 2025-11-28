@@ -7,9 +7,6 @@ from plotter import update_plot
 
 
 def start_pose_detection():
-    # ------------------------------
-    # INITIAL SETUP
-    # ------------------------------
     model_pose = YOLO("yolov8s-pose.pt")
 
     mp_hands = mp.solutions.hands
@@ -21,15 +18,10 @@ def start_pose_detection():
 
     cap = cv2.VideoCapture(0)
 
-    # MODE TOGGLE
+    # Mode toggle
     hand_mode = True  # False = arm mode, True = hand mode
-    # If keypress is unreliable, just manually set:
-    # hand_mode = True   # force hand mode
-    # hand_mode = False  # force arm mode
 
-    # ------------------------------
-    # MAIN LOOP
-    # ------------------------------
+    # Main loop
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
@@ -38,16 +30,11 @@ def start_pose_detection():
         frame = cv2.flip(frame, 1)
         waves_this_frame = []
 
-        # --------------------------------------------------------
-        # MODE SWITCH
-        # --------------------------------------------------------
         mode_txt = "HAND MODE" if hand_mode else "ARM MODE"
         cv2.putText(frame, mode_txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                     1.0, (0, 255, 255), 2, cv2.LINE_AA)
 
-        # --------------------------------------------------------
-        # HAND MODE
-        # --------------------------------------------------------
+        # Hand mode
         if hand_mode:
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = hands.process(rgb)
@@ -74,21 +61,43 @@ def start_pose_detection():
                                  (int(b[0]), int(b[1])),
                                  (255, 150, 0), 2)
 
-                    # add metadata for vertical control (similar to arm mode)
+                    # average position
+                    avg_x = sum(p[0] for p in pts) / len(pts)
                     avg_y = sum(p[1] for p in pts) / len(pts)
-                    metadata = (avg_y, frame.shape[0])
+
+                    # draw avg point on camera feed
+                    cv2.circle(frame,
+                               (int(avg_x), int(avg_y)),
+                               10, (0, 0, 255), -1)
+
+                    # add metadata for vertical & horizontal control
+                    metadata = (avg_y, frame.shape[0], avg_x, frame.shape[1])
                     pts_with_metadata = pts + [metadata]
 
-                    wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
-                    waves_this_frame.append((filtered_wave, freq, wave))
+                    (wave,
+                     freq,
+                     note_name,
+                     lp_cutoff,
+                     lp_bin_idx,
+                     hp_cutoff,
+                     hp_bin_idx) = pose_to_waveform(pts_with_metadata)
 
-                    # overlay like in arm mode
+                    waves_this_frame.append(
+                        (wave, freq, lp_cutoff, hp_cutoff, note_name, lp_bin_idx, hp_bin_idx)
+                    )
+
                     overlay_y = 60 + i * spacing
-                    overlay_lines(frame, i, cutoff, norm, avg_y, overlay_y)
+                    overlay_lines(frame,
+                                  i,
+                                  freq,
+                                  note_name,
+                                  lp_cutoff,
+                                  lp_bin_idx,
+                                  hp_cutoff,
+                                  hp_bin_idx,
+                                  overlay_y)
 
-        # --------------------------------------------------------
-        # ARM MODE
-        # --------------------------------------------------------
+        # Arm mode
         else:
             results = model_pose(frame, verbose=False)
 
@@ -139,37 +148,58 @@ def start_pose_detection():
                                  (int(b[0]), int(b[1])),
                                  (200, 200, 0), 2)
 
-                    # metadata
+                    # average position
+                    avg_x = sum(p[0] for p in pts) / len(pts)
                     avg_y = sum(p[1] for p in pts) / len(pts)
-                    pts_with_metadata = pts + [(avg_y, frame.shape[0])]
 
-                    wave, freq, filtered_wave, cutoff, norm = pose_to_waveform(pts_with_metadata)
-                    waves_this_frame.append((filtered_wave, freq, wave))
+                    # draw avg point on camera feed
+                    cv2.circle(frame,
+                               (int(avg_x), int(avg_y)),
+                               10, (0, 0, 255), -1)
+
+                    # metadata
+                    metadata = (avg_y, frame.shape[0], avg_x, frame.shape[1])
+                    pts_with_metadata = pts + [metadata]
+
+                    (wave,
+                     freq,
+                     note_name,
+                     lp_cutoff,
+                     lp_bin_idx,
+                     hp_cutoff,
+                     hp_bin_idx) = pose_to_waveform(pts_with_metadata)
+
+                    waves_this_frame.append(
+                        (wave, freq, lp_cutoff, hp_cutoff, note_name, lp_bin_idx, hp_bin_idx)
+                    )
 
                     overlay_y = 60 + pi * spacing
-                    overlay_lines(frame, pi, cutoff, norm, avg_y, overlay_y)
+                    overlay_lines(frame,
+                                  pi,
+                                  freq,
+                                  note_name,
+                                  lp_cutoff,
+                                  lp_bin_idx,
+                                  hp_cutoff,
+                                  hp_bin_idx,
+                                  overlay_y)
 
-        # --------------------------------------------------------
-        # AUDIO + PLOTTING
-        # --------------------------------------------------------
+        # Audio and plotting
         if waves_this_frame:
-            audio_list = [(fw, f) for (fw, f, ow) in waves_this_frame]
+            # audio: each entry is (wave, freq, lp_cutoff, hp_cutoff)
+            audio_list = [(w, f, lp, hp) for (w, f, lp, hp, note, lb, hb) in waves_this_frame]
             update_audio_from_multiple(audio_list)
 
+            # plotting: just show the raw period-based waveforms (no filter curves)
             processed = []
-            for (fw, f, ow) in waves_this_frame:
-                orig = _wave_to_period(ow, f)
-                filt = _wave_to_period(fw, f)
-                processed.append((orig, filt))
+            for (w, f, lp, hp, note, lb, hb) in waves_this_frame:
+                orig = _wave_to_period(w, f)
+                processed.append(orig)
 
             update_plot(processed)
 
-        # --------------------------------------------------------
-        # DISPLAY + KEYPRESS
-        # --------------------------------------------------------
         cv2.imshow("Hand/Arm Pose Detection", frame)
 
-        # NOTE: must be AFTER imshow and inside OpenCV window focus
         key = cv2.waitKey(1) & 0xFF
         if key == ord('h'):
             hand_mode = not hand_mode
@@ -182,16 +212,28 @@ def start_pose_detection():
     cv2.destroyAllWindows()
 
 
-# -----------------------------------------------------------
-# SMALL HELPER FUNCTION
-# -----------------------------------------------------------
-def overlay_lines(frame, pi, cutoff, norm, avg_y, overlay_y):
+def overlay_lines(frame,
+                  pi,
+                  freq,
+                  note_name,
+                  lp_cutoff,
+                  lp_bin_idx,
+                  hp_cutoff,
+                  hp_bin_idx,
+                  overlay_y):
     font = cv2.FONT_HERSHEY_SIMPLEX
+
+    def bin_bar(bin_idx, num_bins=8):
+        return "[" + "".join("#" if i <= bin_idx else "-" for i in range(num_bins)) + "]"
+
+    lp_bar = bin_bar(lp_bin_idx)
+    hp_bar = bin_bar(hp_bin_idx)
+
     lines = [
         f"Person {pi+1}",
-        f"Cutoff: {cutoff:.0f} Hz",
-        f"Norm: {norm:.2f}",
-        f"AvgY: {avg_y:.1f}",
+        f"Freq: {freq:.0f} Hz ({note_name})",
+        f"LP: {lp_cutoff:.0f} Hz {lp_bar}",
+        f"HP: {hp_cutoff:.0f} Hz {hp_bar}",
     ]
     scales = [0.7, 0.7, 0.6, 0.6]
     thicks = [2, 2, 1, 1]

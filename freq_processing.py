@@ -2,37 +2,148 @@ import numpy as np
 import sounddevice as sd
 from scipy.signal import resample
 from scipy.interpolate import interp1d
+from scipy import signal
 import threading
-from synthesizer import Synthesizer
+import math
 
 FS = 44100
-# Define frequency range
-MIN_FREQ = 130.82   # C3
+
+# Global musical scale (used for pitch quantization)
+CURRENT_SCALE = "C major"
+
+# Define pitch range
+MIN_FREQ = 65.41   # C2
 MAX_FREQ = min(2093, FS // 2 - 100.0)  # C7
+
+# Define filter cutoff ranges
+# Lowpass (controlled by avg_y)
+MIN_CUTOFF = 1079.0
+MAX_CUTOFF = min(FS // 2 - 100.0, 4000.0)
+
+# Highpass (controlled by avg_x)
+HP_MIN_CUTOFF = 10.0
+HP_MAX_CUTOFF = min(FS // 2 - 100.0, 1079.0)
 
 lock = threading.Lock()
 stream = None
 
 # Multiple voices: one period + phase per person
-periods = []   # list of np.ndarray (float32)
-phases = []    # list of ints
+periods = []    # list of np.ndarray (float32) – one period per voice
+phases = []     # list of ints – phase index per voice
 
-# Reusable synthesizer instance to avoid recreating repeatedly
-synth = Synthesizer(sample_rate=FS)
+# Per-voice lowpass filters
+cutoffs = []        # list of float cutoff freq per voice (lowpass)
+lp_sos_list = []    # list of SOS filter coefficients (one per voice, lowpass)
+lp_zi_list = []     # list of filter state arrays (one per voice, lowpass)
 
+# Per-voice highpass filters
+hp_cutoffs = []     # list of float cutoff freq per voice (highpass)
+hp_sos_list = []    # list of SOS filter coefficients (one per voice, highpass)
+hp_zi_list = []     # list of filter state arrays (one per voice, highpass)
+
+
+# ---------------------------
+#  Pitch / Scale Utilities
+# ---------------------------
+
+_NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F',
+               'F#', 'G', 'G#', 'A', 'A#', 'B']
+
+_NOTE_TO_PC = {
+    'c': 0, 'c#': 1, 'db': 1,
+    'd': 2, 'd#': 3, 'eb': 3,
+    'e': 4, 'fb': 4, 'e#': 5,
+    'f': 5, 'f#': 6, 'gb': 6,
+    'g': 7, 'g#': 8, 'ab': 8,
+    'a': 9, 'a#': 10, 'bb': 10,
+    'b': 11, 'cb': 11, 'b#': 0,
+}
+
+def _freq_to_midi(f):
+    return 69.0 + 12.0 * math.log2(f / 440.0)
+
+def _midi_to_freq(m):
+    return 440.0 * (2.0 ** ((m - 69.0) / 12.0))
+
+def _midi_to_name(m):
+    m_int = int(round(m))
+    pc = m_int % 12
+    octave = m_int // 12 - 1
+    return f"{_NOTE_NAMES[pc]}{octave}"
+
+def _parse_scale_name(scale_name):
+    s = scale_name.strip().lower().replace(" ", "")
+    mode = "major"
+    if "major" in s:
+        mode = "major"
+        root_str = s.replace("major", "")
+    elif "minor" in s:
+        mode = "minor"
+        root_str = s.replace("minor", "")
+    else:
+        # default to major if mode not specified
+        root_str = s
+        mode = "major"
+
+    root_str = root_str or "c"
+    root_str = root_str.replace("♯", "#").replace("♭", "b")
+
+    root_pc = _NOTE_TO_PC.get(root_str, 0)  # default C if unknown
+    return root_pc, mode
+
+def _build_scale_classes(scale_name):
+    root_pc, mode = _parse_scale_name(scale_name)
+
+    if mode == "minor":
+        intervals = [0, 2, 3, 5, 7, 8, 10]  # natural minor
+    else:
+        intervals = [0, 2, 4, 5, 7, 9, 11]  # major
+
+    classes = [ (root_pc + i) % 12 for i in intervals ]
+    return classes
+
+def quantize_frequency_to_scale(freq, scale_name):
+    freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
+    allowed_classes = _build_scale_classes(scale_name)
+
+    orig_midi = _freq_to_midi(freq)
+
+    best_midi = orig_midi
+    best_freq = freq
+    best_err = float("inf")
+
+    # search all midi notes and keep ones in scale & within freq range
+    for m in range(0, 128):
+        if (m % 12) not in allowed_classes:
+            continue
+        f = _midi_to_freq(m)
+        if f < MIN_FREQ or f > MAX_FREQ:
+            continue
+        err = abs(m - orig_midi)
+        if err < best_err:
+            best_err = err
+            best_midi = m
+            best_freq = f
+
+    note_name = _midi_to_name(best_midi)
+    return best_freq, note_name
+
+
+# ---------------------------
+#     Main Pose → Wave
+# ---------------------------
 
 def pose_to_waveform(keypoints):
     # Extract metadata from the end of the list (if present)
     # Metadata is stored as a tuple and should not be used for waveform generation
     if len(keypoints) > 0 and isinstance(keypoints[-1], tuple):
-        # Last element is metadata tuple, extract it
         metadata = keypoints[-1]
         pts = np.array(keypoints[:-1], dtype=float)
     else:
-        # No metadata, use all points
         metadata = None
         pts = np.array(keypoints, dtype=float)
 
+    # Center on the third point
     center = pts[2]
     rel = pts - center
     rel = rel[np.argsort(rel[:, 0])]
@@ -42,12 +153,10 @@ def pose_to_waveform(keypoints):
     ys = ys / (np.max(np.abs(ys)) + 1e-9)
 
     # Add tiny random jitter to x-coordinates to avoid duplicates (which break cubic interpolation)
-    # This is imperceptible but allows interpolation to work
     jitter = np.random.normal(0, 1e-10, len(xs))
     xs = xs + jitter
 
-    # Upsample the points 2x for richer waveform control
-    # Use cubic interpolation for higher-quality upsampling
+    # Upsample the points 2x for richer waveform control using cubic interpolation
     if len(xs) > 1:
         f = interp1d(xs, ys, kind='cubic', fill_value='extrapolate')
         xs_up = np.linspace(xs[0], xs[-1], len(xs) * 2 - 1)
@@ -64,9 +173,7 @@ def pose_to_waveform(keypoints):
     tu = np.linspace(0, t[-1], L)
     wave = np.interp(tu, t, ys).astype(np.float32)
 
-    # Compute original spectrum (for reference/plotting)
-    # X_orig = np.fft.rfft(wave)
-
+    # Map raw width -> pitch
     RAW_MIN = 10
     RAW_MAX = 1000
 
@@ -74,60 +181,70 @@ def pose_to_waveform(keypoints):
     norm = (RAW_MAX - raw_width) / (RAW_MAX - RAW_MIN)
     norm = np.clip(norm, 0.0, 1.0)
 
-    gamma = 0.4  # tweak this for more/less sensitivity
+    gamma = 0.4  # tweak for more/less sensitivity
     v = norm ** gamma
 
     freq = float(MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** v))
     freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
-    print(f"Computed freq: {freq:.2f} Hz from raw width: {raw_width:.4f}")
 
-    # Determine cutoff frequency for lowpass based on avg_y
-    # Make the effect more extreme: allow a very low MIN_CUTOFF and a high MAX_CUTOFF
-    # Clamp MAX_CUTOFF to a safe value below Nyquist
-    MIN_CUTOFF = 300.0
-    MAX_CUTOFF = min(FS // 2 - 100.0, 4000.0)
-    # extract avg_y and frame height (if provided) from metadata tuple
+    # Quantize frequency to CURRENT_SCALE and get note name
+    freq_q, note_name = quantize_frequency_to_scale(freq, CURRENT_SCALE)
+
+    # Determine cutoff frequencies for lowpass (from avg_y) and highpass (from avg_x)
     avg_y = None
+    avg_x = None
     frame_h = 480  # fallback
+    frame_w = 640  # fallback
+
     if metadata is not None and isinstance(metadata, (list, tuple)):
-        if len(metadata) > 0:
-            try:
+        # metadata: (avg_y, frame_h, avg_x, frame_w)
+        try:
+            if len(metadata) > 0:
                 avg_y = float(metadata[0])
-            except Exception:
-                avg_y = None
-        if len(metadata) > 1:
-            try:
+            if len(metadata) > 1:
                 frame_h = int(metadata[1])
-            except Exception:
-                frame_h = frame_h
+            if len(metadata) > 2:
+                avg_x = float(metadata[2])
+            if len(metadata) > 3:
+                frame_w = int(metadata[3])
+        except Exception:
+            pass
 
+    NUM_BINS = 8
+
+    # Lowpass mapping (Y)
     if avg_y is None:
-        cutoff = (MIN_CUTOFF + MAX_CUTOFF) / 2.0
+        lp_cutoff = (MIN_CUTOFF + MAX_CUTOFF) / 2.0
+        lp_bin_idx = NUM_BINS // 2
     else:
-        # normalize by actual frame height then map to cutoff range
         frame_h = max(1, frame_h)
-        norm = np.clip(avg_y / float(frame_h), 0.0, 1.0)
-        # Use a stronger exponent to bias values toward the extremes
-        POWER = 4.0
-        norm_pow = norm ** POWER
-        # Use geometric interpolation for perceptual scaling (log-space)
-        # cutoff = MIN_CUTOFF * (MAX_CUTOFF / MIN_CUTOFF) ** norm_pow
-        cutoff = float(MIN_CUTOFF * ((MAX_CUTOFF / MIN_CUTOFF) ** norm_pow))
+        norm_y = np.clip(avg_y / float(frame_h), 0.0, 1.0)
+        lp_bin_idx = int(norm_y * NUM_BINS)
+        lp_bin_idx = int(np.clip(lp_bin_idx, 0, NUM_BINS - 1))
+        lp_bins = np.linspace(MIN_CUTOFF, MAX_CUTOFF, NUM_BINS)
+        lp_cutoff = float(lp_bins[lp_bin_idx])
 
-    # Apply a steeper lowpass filter to make the effect unmistakable.
-    # Increase filter order and apply the filter twice for stronger attenuation.
-    try:
-        filtered_wave = synth.lowpass_filter(wave, cutoff_hz=cutoff, order=8)
-    except Exception:
-        # Fall back to a single, safer filter if something goes wrong
-        filtered_wave = synth.lowpass_filter(wave, cutoff_hz=cutoff)
+    # Highpass mapping (X)
+    if avg_x is None:
+        hp_cutoff = (HP_MIN_CUTOFF + HP_MAX_CUTOFF) / 2.0
+        hp_bin_idx = NUM_BINS // 2
+    else:
+        frame_w = max(1, frame_w)
+        norm_x = np.clip(avg_x / float(frame_w), 0.0, 1.0)
+        hp_bin_idx = int(norm_x * NUM_BINS)
+        hp_bin_idx = int(np.clip(hp_bin_idx, 0, NUM_BINS - 1))
+        hp_bins = np.linspace(HP_MIN_CUTOFF, HP_MAX_CUTOFF, NUM_BINS)
+        hp_cutoff = float(hp_bins[hp_bin_idx])
 
-    # Also compute spectrum of filtered wave for potential plotting
-    # X_filt = np.fft.rfft(filtered_wave)
-
-    # Return original wave, computed freq, filtered wave, and control metadata
-    # (cutoff in Hz and normalized control value) so callers can display/debug.
-    return wave, freq, filtered_wave, cutoff, norm
+    # Return:
+    #  wave           - raw period-shaped wave
+    #  freq_q         - quantized pitch frequency
+    #  note_name      - note string like "C4"
+    #  lp_cutoff      - lowpass cutoff (Hz)
+    #  lp_bin_idx     - lowpass bin index (0..NUM_BINS-1)
+    #  hp_cutoff      - highpass cutoff (Hz)
+    #  hp_bin_idx     - highpass bin index (0..NUM_BINS-1)
+    return wave, freq_q, note_name, lp_cutoff, lp_bin_idx, hp_cutoff, hp_bin_idx
 
 
 def _wave_to_period(wave, freq):
@@ -140,46 +257,131 @@ def _wave_to_period(wave, freq):
     return p
 
 
-def update_audio_from_multiple(wave_freq_list):
-    global periods, phases
+def update_audio_from_multiple(wave_freq_cutoff_list):
+    """
+    wave_freq_cutoff_list: list of (wave, freq, lp_cutoff, hp_cutoff) tuples.
+    For each voice we:
+      - convert wave to a single period at the desired frequency
+      - design per-voice lowpass and highpass filters using those cutoffs
+      - reset their filter states
+    """
+    global periods, phases, cutoffs, lp_sos_list, lp_zi_list
+    global hp_cutoffs, hp_sos_list, hp_zi_list
 
     new_periods = []
-    for wave, freq in wave_freq_list:
+    new_cutoffs = []
+    new_sos_list = []
+    new_zi_list = []
+
+    new_hp_cutoffs = []
+    new_hp_sos_list = []
+    new_hp_zi_list = []
+
+    nyq = FS * 0.5
+
+    for wave, freq, lp_cutoff, hp_cutoff in wave_freq_cutoff_list:
         p = _wave_to_period(wave, freq)
-        if len(p) > 0:
-            new_periods.append(p)
+        if len(p) == 0:
+            continue
+
+        # Lowpass
+        lp_cutoff = float(np.clip(lp_cutoff, MIN_CUTOFF, MAX_CUTOFF))
+        lp_Wn = lp_cutoff / nyq
+
+        try:
+            lp_sos = signal.butter(4, lp_Wn, btype='low', output='sos')
+            lp_zi = signal.sosfilt_zi(lp_sos) * 0.0
+        except Exception as ex:
+            print(f"[update_audio_from_multiple] LP filter design failed: {ex}")
+            lp_sos = None
+            lp_zi = None
+
+        # Highpass
+        hp_cutoff = float(np.clip(hp_cutoff, HP_MIN_CUTOFF, HP_MAX_CUTOFF))
+        hp_Wn = hp_cutoff / nyq
+
+        try:
+            hp_sos = signal.butter(4, hp_Wn, btype='high', output='sos')
+            hp_zi = signal.sosfilt_zi(hp_sos) * 0.0
+        except Exception as ex:
+            print(f"[update_audio_from_multiple] HP filter design failed: {ex}")
+            hp_sos = None
+            hp_zi = None
+
+        new_periods.append(p)
+        new_cutoffs.append(lp_cutoff)
+        new_sos_list.append(lp_sos)
+        new_zi_list.append(lp_zi)
+
+        new_hp_cutoffs.append(hp_cutoff)
+        new_hp_sos_list.append(hp_sos)
+        new_hp_zi_list.append(hp_zi)
 
     with lock:
         periods = new_periods
         phases = [0] * len(new_periods)
 
+        cutoffs = new_cutoffs
+        lp_sos_list = new_sos_list
+        lp_zi_list = new_zi_list
+
+        hp_cutoffs = new_hp_cutoffs
+        hp_sos_list = new_hp_sos_list
+        hp_zi_list = new_hp_zi_list
+
 
 def update_audio_from_pose(keypoints):
-    # pose_to_waveform now returns (wave, freq, filtered, cutoff, norm)
-    _, freq, filtered, _, _ = pose_to_waveform(keypoints)
-    update_audio_from_multiple([(filtered, freq)])
+    # pose_to_waveform now returns (wave, freq, note_name, lp, lp_bin, hp, hp_bin)
+    wave, freq, note_name, lp_cutoff, lp_bin_idx, hp_cutoff, hp_bin_idx = pose_to_waveform(keypoints)
+    update_audio_from_multiple([(wave, freq, lp_cutoff, hp_cutoff)])
 
 
 def audio_callback(outdata, frames, time, status):
-    global periods, phases
+    global periods, phases, lp_sos_list, lp_zi_list, hp_sos_list, hp_zi_list
 
-    # Check for audio device errors/warnings
     if status:
         print(f"[audio] Status: {status}")
 
     try:
-        # Minimize lock time: copy data once and release immediately
+        # Copy shared state under lock
         with lock:
-            local_periods = list(periods)  # shallow copy of list
+            local_periods = list(periods)
             local_phases = phases.copy()
 
-        # Ensure phase array matches number of periods: pad with zeros or truncate
-        if len(local_phases) < len(local_periods):
-            local_phases.extend([0] * (len(local_periods) - len(local_phases)))
-        elif len(local_phases) > len(local_periods):
-            local_phases = local_phases[:len(local_periods)]
+            local_lp_sos_list = list(lp_sos_list)
+            local_lp_zi_list = [zi.copy() if zi is not None else None for zi in lp_zi_list]
+
+            local_hp_sos_list = list(hp_sos_list)
+            local_hp_zi_list = [zi.copy() if zi is not None else None for zi in hp_zi_list]
 
         nvoices = len(local_periods)
+
+        # Align lengths for LP lists
+        if len(local_lp_sos_list) < nvoices:
+            for _ in range(nvoices - len(local_lp_sos_list)):
+                local_lp_sos_list.append(None)
+        elif len(local_lp_sos_list) > nvoices:
+            local_lp_sos_list = local_lp_sos_list[:nvoices]
+
+        if len(local_lp_zi_list) < nvoices:
+            for _ in range(nvoices - len(local_lp_zi_list)):
+                local_lp_zi_list.append(None)
+        elif len(local_lp_zi_list) > nvoices:
+            local_lp_zi_list = local_lp_zi_list[:nvoices]
+
+        # Align lengths for HP lists
+        if len(local_hp_sos_list) < nvoices:
+            for _ in range(nvoices - len(local_hp_sos_list)):
+                local_hp_sos_list.append(None)
+        elif len(local_hp_sos_list) > nvoices:
+            local_hp_sos_list = local_hp_sos_list[:nvoices]
+
+        if len(local_hp_zi_list) < nvoices:
+            for _ in range(nvoices - len(local_hp_zi_list)):
+                local_hp_zi_list.append(None)
+        elif len(local_hp_zi_list) > nvoices:
+            local_hp_zi_list = local_hp_zi_list[:nvoices]
+
         if nvoices == 0:
             outdata[:] = 0.0
             return
@@ -188,31 +390,51 @@ def audio_callback(outdata, frames, time, status):
 
         for v, p in enumerate(local_periods):
             try:
-                p = np.asarray(p)
+                p = np.asarray(p, dtype=np.float32)
                 L = len(p)
                 if L == 0:
                     continue
+
                 phase = int(local_phases[v]) if v < len(local_phases) else 0
                 idxs = (np.arange(frames) + phase) % L
-                out += p[idxs]
+                voice = p[idxs]
+
+                # Apply per-voice lowpass filter in real time
+                lp_sos = local_lp_sos_list[v]
+                lp_zi = local_lp_zi_list[v]
+                if lp_sos is not None and lp_zi is not None:
+                    try:
+                        voice, local_lp_zi_list[v] = signal.sosfilt(lp_sos, voice, zi=lp_zi)
+                    except Exception as ex:
+                        print(f"[audio_callback] LP sosfilt failed for voice {v}: {ex}")
+
+                # Apply per-voice highpass filter in real time
+                hp_sos = local_hp_sos_list[v]
+                hp_zi = local_hp_zi_list[v]
+                if hp_sos is not None and hp_zi is not None:
+                    try:
+                        voice, local_hp_zi_list[v] = signal.sosfilt(hp_sos, voice, zi=hp_zi)
+                    except Exception as ex:
+                        print(f"[audio_callback] HP sosfilt failed for voice {v}: {ex}")
+
+                out += voice
                 local_phases[v] = int((phase + frames) % L)
+
             except Exception as ex:
-                # Skip this voice on error but continue rendering others
                 print(f"[audio_callback] voice {v} skipped: {ex}")
                 continue
 
-        # Divide by sqrt(nvoices) (coherent-sounding rough normalization) so more voices
-        # don't make the mix disproportionately louder.
+        # Rough normalization across voices
         if nvoices > 1:
             out /= np.sqrt(nvoices)
 
-        # Peak-limit the mix to a desired maximum without amplifying quiet signals.
+        # Peak-limit (don't amplify quiet signals)
         desired_peak = 0.3
         peak = np.max(np.abs(out)) + 1e-9
         if peak > desired_peak:
             out *= (desired_peak / peak)
 
-        # Write the mono mix into the output buffer in a channel-agnostic way
+        # Write to output buffer
         if outdata.ndim == 1:
             outdata[:] = out
         else:
@@ -220,9 +442,11 @@ def audio_callback(outdata, frames, time, status):
             for ch in range(nch):
                 outdata[:, ch] = out
 
-        # Update phase state so the next callback resumes correctly
+        # Write back updated phase and filter states
         with lock:
             phases = local_phases
+            lp_zi_list = local_lp_zi_list
+            hp_zi_list = local_hp_zi_list
 
     except Exception as e:
         print(f"[audio_callback] Error: {e}")
