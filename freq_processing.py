@@ -22,9 +22,104 @@ def set_global_scale(scale_name):
 def set_global_mode(mode_name):
     """Called from the terminal command thread."""
     global CURRENT_MODE
-    if mode_name in ("hand", "arm"):
+    if mode_name in ('hand', 'arm'):
         CURRENT_MODE = mode_name
 
+
+# Instrument/timbre system
+INSTRUMENT_PROFILES = {
+    'fundamental': np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+
+    # Rough, musical-ish profiles – tweak later by ear if you want
+    'piano': np.array([1.0, 0.8, 0.6, 0.4, 0.25, 0.15, 0.10, 0.05], dtype=np.float32),
+
+    'flute': np.array([1.0, 0.2, 0.10, 0.05, 0.03, 0.02, 0.01, 0.005], dtype=np.float32),
+
+    # Clarinet: strong odd harmonics
+    'clarinet': np.array([1.0, 0.0, 0.7, 0.0, 0.5, 0.0, 0.3, 0.0], dtype=np.float32),
+
+    # Organ: lots of harmonics with slow decay
+    'organ': np.array([1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3], dtype=np.float32),
+
+    # Trumpet: bright and brassy
+    'trumpet': np.array([1.0, 0.9, 0.7, 0.5, 0.4, 0.3, 0.25, 0.20], dtype=np.float32),
+}
+
+# person index (1-based), instrument name (string)
+PERSON_INSTRUMENTS = {}   # e.g. {1: 'piano', 2: 'flute'}
+
+
+def list_instruments():
+    return list(INSTRUMENT_PROFILES.keys())
+
+
+def set_person_instrument(person_index, instrument_name):
+    """
+    Assign an instrument to a given person index (1-based).
+    This is called from the terminal command thread.
+    """
+    global PERSON_INSTRUMENTS
+    name = instrument_name.strip().lower()
+    if name not in INSTRUMENT_PROFILES:
+        print(f'[instrument] Unknown instrument {instrument_name}. '
+              f"Valid instruments: {', '.join(list_instruments())}")
+        return False
+    PERSON_INSTRUMENTS[person_index] = name
+    print(f'[instrument] Person {person_index} instrument -> {name}')
+    return True
+
+
+def get_instrument_for_person(person_index):
+    """
+    Return the instrument name for this person index, defaulting to 'fundamental'.
+    """
+    name = PERSON_INSTRUMENTS.get(person_index, 'fundamental')
+    if name not in INSTRUMENT_PROFILES:
+        name = 'fundamental'
+    return name
+
+
+def apply_instrument_profile(period, instrument_name):
+    """
+    Given a single-period waveform (pose-derived) and an instrument name,
+    build an 8-harmonic timbre using that period as the basis waveform.
+
+    - We keep the *fundamental period length* the same.
+    - Each harmonic k just "runs through" the base period k times within
+      the same fundamental period using index wrapping.
+    - The sum is then normalized back to a fixed peak (0.3) like before.
+    """
+    period = np.asarray(period, dtype=np.float32)
+    L = len(period)
+    if L == 0:
+        return period
+
+    name = instrument_name.strip().lower()
+    weights = INSTRUMENT_PROFILES.get(name, INSTRUMENT_PROFILES['fundamental'])
+
+    # Center the base period (remove DC) to make harmonics cleaner
+    base = period - np.mean(period)
+
+    result = np.zeros_like(base, dtype=np.float32)
+    idx_base = np.arange(L, dtype=np.int64)
+
+    # Harmonic k = 1..8 is weights[0..7]
+    for h_idx, amp in enumerate(weights):
+        if amp == 0.0:
+            continue
+        k = h_idx + 1
+        idxs = (idx_base * k) % L   # run through base k times
+        result += amp * base[idxs]
+
+    # Normalize to same peak level behavior as original _wave_to_period
+    peak = np.max(np.abs(result)) + 1e-6
+    result = result / peak * 0.3
+    return result.astype(np.float32)
+
+
+# ---------------------------
+# Pitch / Scale Utilities
+# ---------------------------
 
 # Define pitch range
 MIN_FREQ = 65.41   # C2
@@ -101,7 +196,7 @@ def _parse_scale_name(scale_name):
         mode = 'major'
 
     root_str = root_str or 'c'
-    root_str = root_str.replace('♯', "#").replace("♭", "b")
+    root_str = root_str.replace('♯', '#').replace('♭', 'b')
 
     root_pc = _NOTE_TO_PC.get(root_str, 0)
     return root_pc, mode
@@ -110,12 +205,12 @@ def _parse_scale_name(scale_name):
 def _build_scale_classes(scale_name):
     root_pc, mode = _parse_scale_name(scale_name)
 
-    if mode == "minor":
+    if mode == 'minor':
         intervals = [0, 2, 3, 5, 7, 8, 10]
     else:
         intervals = [0, 2, 4, 5, 7, 9, 11]
 
-    return [ (root_pc + i) % 12 for i in intervals ]
+    return [(root_pc + i) % 12 for i in intervals]
 
 
 def quantize_frequency_to_scale(freq, scale_name):
@@ -125,7 +220,7 @@ def quantize_frequency_to_scale(freq, scale_name):
     orig_midi = _freq_to_midi(freq)
     best_m = orig_midi
     best_f = freq
-    best_err = float("inf")
+    best_err = float('inf')
 
     for m in range(0, 128):
         if (m % 12) not in allowed:
@@ -271,6 +366,7 @@ def update_audio_from_multiple(wave_freq_cutoff_list):
     wave_freq_cutoff_list: list of (wave, freq, lp_cutoff, hp_cutoff) tuples.
     For each voice we:
       - convert wave to a single period at the desired frequency
+      - apply the selected instrument timbre (harmonic shaping)
       - design per-voice lowpass and highpass filters using those cutoffs
       - reset their filter states
     """
@@ -288,10 +384,16 @@ def update_audio_from_multiple(wave_freq_cutoff_list):
 
     nyq = FS * 0.5
 
-    for wave, freq, lp_cutoff, hp_cutoff in wave_freq_cutoff_list:
-        p = _wave_to_period(wave, freq)
-        if len(p) == 0:
+    for idx, (wave, freq, lp_cutoff, hp_cutoff) in enumerate(wave_freq_cutoff_list):
+        # 1) One-period waveform at the fundamental
+        p_base = _wave_to_period(wave, freq)
+        if len(p_base) == 0:
             continue
+
+        # 2) Apply instrument timbre for this person index (1-based)
+        person_index = idx + 1
+        instr_name = get_instrument_for_person(person_index)
+        p = apply_instrument_profile(p_base, instr_name)
 
         # Lowpass
         lp_cutoff = float(np.clip(lp_cutoff, MIN_CUTOFF, MAX_CUTOFF))
@@ -346,7 +448,7 @@ def update_audio_from_pose(keypoints):
 
 
 def audio_callback(outdata, frames, time, status):
-    global periods, phases, lp_sos_list, lp_zi_list
+    global periods, phases, lp_sos_list, lp_zi_list, hp_sos_list, hp_zi_list
 
     if status:
         print(f'[audio] Status: {status}')
@@ -356,15 +458,18 @@ def audio_callback(outdata, frames, time, status):
         with lock:
             local_periods = list(periods)
             local_phases = phases.copy()
-            local_sos_list = list(lp_sos_list)
-            local_zi_list = [zi.copy() if zi is not None else None for zi in lp_zi_list]
+            local_lp_sos_list = list(lp_sos_list)
+            local_lp_zi_list = [zi.copy() if zi is not None else None for zi in lp_zi_list]
+            local_hp_sos_list = list(hp_sos_list)
+            local_hp_zi_list = [zi.copy() if zi is not None else None for zi in hp_zi_list]
 
         nvoices = len(local_periods)
 
         # If any list length mismatch, then safely skip buffer
         if not (
-            len(local_phases) == len(local_sos_list) ==
-            len(local_zi_list) == nvoices
+            len(local_phases) == len(local_lp_sos_list) ==
+            len(local_lp_zi_list) == len(local_hp_sos_list) ==
+            len(local_hp_zi_list) == nvoices
         ):
             outdata[:] = 0.0
             return
@@ -387,11 +492,16 @@ def audio_callback(outdata, frames, time, status):
                 idxs = (np.arange(frames) + phase) % L
                 voice = p[idxs]
 
-                sos = local_sos_list[v]
-                zi = local_zi_list[v]
+                # Highpass then lowpass (both applied AFTER timbre shaper)
+                hp_sos = local_hp_sos_list[v]
+                hp_zi = local_hp_zi_list[v]
+                if hp_sos is not None and hp_zi is not None:
+                    voice, local_hp_zi_list[v] = signal.sosfilt(hp_sos, voice, zi=hp_zi)
 
-                if sos is not None and zi is not None:
-                    voice, local_zi_list[v] = signal.sosfilt(sos, voice, zi=zi)
+                lp_sos = local_lp_sos_list[v]
+                lp_zi = local_lp_zi_list[v]
+                if lp_sos is not None and lp_zi is not None:
+                    voice, local_lp_zi_list[v] = signal.sosfilt(lp_sos, voice, zi=lp_zi)
 
                 out += voice
                 local_phases[v] = int((phase + frames) % L)
@@ -421,10 +531,12 @@ def audio_callback(outdata, frames, time, status):
             # Only write back if lengths STILL match
             if (
                 len(phases) == nvoices and
-                len(lp_zi_list) == nvoices
+                len(lp_zi_list) == nvoices and
+                len(hp_zi_list) == nvoices
             ):
                 phases = local_phases
-                lp_zi_list = local_zi_list
+                lp_zi_list = local_lp_zi_list
+                hp_zi_list = local_hp_zi_list
 
     except Exception as e:
         print(f'[audio_callback] Error: {e}')

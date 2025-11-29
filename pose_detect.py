@@ -188,11 +188,13 @@ def start_pose_detection():
             audio_list = [(w, f, lp, hp) for (w, f, lp, hp, note, lb, hb) in waves_this_frame]
             fp.update_audio_from_multiple(audio_list)
 
-            # plotting: just show the raw period-based waveforms (no filter curves)
+            # plotting: show the actual instrument-shaped period
             processed = []
-            for (w, f, lp, hp, note, lb, hb) in waves_this_frame:
-                orig = fp._wave_to_period(w, f)
-                processed.append(orig)
+            for idx, (w, f, lp, hp, note, lb, hb) in enumerate(waves_this_frame):
+                base = fp._wave_to_period(w, f)
+                instr_name = fp.get_instrument_for_person(idx + 1)
+                shaped = fp.apply_instrument_profile(base, instr_name)
+                processed.append(shaped)
 
             update_plot(processed)
 
@@ -225,8 +227,12 @@ def overlay_lines(frame,
     lp_bar = bin_bar(lp_bin_idx)
     hp_bar = bin_bar(hp_bin_idx)
 
+    # Instrument label for this person index (1-based)
+    person_index = pi + 1
+    instr = fp.get_instrument_for_person(person_index)
+
     lines = [
-        f'Person {pi+1}',
+        f'Person {person_index} ({instr})',
         f'Freq: {freq:.0f} Hz ({note_name})',
         f'LP: {lp_cutoff:.0f} Hz {lp_bar}',
         f'HP: {hp_cutoff:.0f} Hz {hp_bar}',

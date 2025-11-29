@@ -7,15 +7,17 @@ from plotter import init_plot
 
 def terminal_command_loop():
     import sys
-    real_stdin = sys.__stdin__ 
+    real_stdin = sys.__stdin__
 
     print('\n=== Pose Synth Terminal Control ===')
     print('Commands:')
-    print('  mode hand           -> use hand landmarks')
-    print('  mode arm            -> use YOLO arm pose')
-    print('  scale <name>        -> set musical scale')
-    print('  help                -> show this help')
-    print('  quit / exit         -> stop this listener')
+    print('  mode hand                 -> use hand landmarks')
+    print('  mode arm                  -> use YOLO arm pose')
+    print('  scale <name>              -> set musical scale (e.g. "c major", "eb minor")')
+    print('  instrument personN <name> -> set instrument for that person index')
+    print(f'     available instruments: {", ".join(fp.list_instruments())}')
+    print('  help                      -> show this help')
+    print('  quit / exit               -> stop this listener (synth keeps running)')
     print('====================================\n')
 
     while True:
@@ -37,13 +39,38 @@ def terminal_command_loop():
                 fp.set_global_scale(scale)
                 print(f'[terminal] Scale set to {fp.CURRENT_SCALE}')
 
+            # Instrument assignment: instrument personN <name>
+            elif line.startswith('instrument '):
+                parts = line.split()
+                if len(parts) >= 3:
+                    person_token = parts[1]  # expect 'person1', 'person2', ...
+                    if not person_token.startswith('person'):
+                        print('[terminal] Usage: instrument personN <instrument_name>')
+                        continue
+                    idx_str = person_token[len('person'):]
+                    if not idx_str.isdigit():
+                        print('[terminal] Person index must be an integer, e.g. person1, person2')
+                        continue
+                    person_index = int(idx_str)
+                    instr_name = ' '.join(parts[2:])  # e.g. 'piano'
+
+                    fp.set_person_instrument(person_index, instr_name)
+                    # set_person_instrument itself prints success / error
+                else:
+                    print('[terminal] Usage: instrument personN <instrument_name>')
+
             # Exit terminal thread
             elif line in ('quit', 'exit'):
                 print('[terminal] Stopping terminal loop (synth continues).')
                 break
 
             elif line == 'help':
-                print('Commands: mode hand/arm, scale <name>, quit')
+                print('Commands:')
+                print('  mode hand / mode arm')
+                print('  scale <name>')
+                print('  instrument personN <instrument_name>')
+                print(f'     available instruments: {", ".join(fp.list_instruments())}')
+                print('  quit / exit')
 
         except Exception as e:
             print(f'[terminal] Error reading command: {e}')
