@@ -2,12 +2,12 @@ import cv2
 from ultralytics import YOLO
 import mediapipe as mp
 
-from freq_processing import update_audio_from_multiple, pose_to_waveform, _wave_to_period
+import freq_processing as fp
 from plotter import update_plot
 
 
 def start_pose_detection():
-    model_pose = YOLO("yolov8s-pose.pt")
+    model_pose = YOLO('yolov8s-pose.pt')
 
     mp_hands = mp.solutions.hands
     hands = mp_hands.Hands(
@@ -18,9 +18,6 @@ def start_pose_detection():
 
     cap = cv2.VideoCapture(0)
 
-    # Mode toggle
-    hand_mode = True  # False = arm mode, True = hand mode
-
     # Main loop
     while cap.isOpened():
         ret, frame = cap.read()
@@ -30,12 +27,13 @@ def start_pose_detection():
         frame = cv2.flip(frame, 1)
         waves_this_frame = []
 
-        mode_txt = "HAND MODE" if hand_mode else "ARM MODE"
+        # Use CURRENT_MODE from freq_processing to decide hand vs arm
+        mode_txt = 'HAND MODE' if fp.CURRENT_MODE == 'hand' else 'ARM MODE'
         cv2.putText(frame, mode_txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX,
                     1.0, (0, 255, 255), 2, cv2.LINE_AA)
 
         # Hand mode
-        if hand_mode:
+        if fp.CURRENT_MODE == 'hand':
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             result = hands.process(rgb)
 
@@ -80,7 +78,7 @@ def start_pose_detection():
                      lp_cutoff,
                      lp_bin_idx,
                      hp_cutoff,
-                     hp_bin_idx) = pose_to_waveform(pts_with_metadata)
+                     hp_bin_idx) = fp.pose_to_waveform(pts_with_metadata)
 
                     waves_this_frame.append(
                         (wave, freq, lp_cutoff, hp_cutoff, note_name, lp_bin_idx, hp_bin_idx)
@@ -167,7 +165,7 @@ def start_pose_detection():
                      lp_cutoff,
                      lp_bin_idx,
                      hp_cutoff,
-                     hp_bin_idx) = pose_to_waveform(pts_with_metadata)
+                     hp_bin_idx) = fp.pose_to_waveform(pts_with_metadata)
 
                     waves_this_frame.append(
                         (wave, freq, lp_cutoff, hp_cutoff, note_name, lp_bin_idx, hp_bin_idx)
@@ -188,23 +186,21 @@ def start_pose_detection():
         if waves_this_frame:
             # audio: each entry is (wave, freq, lp_cutoff, hp_cutoff)
             audio_list = [(w, f, lp, hp) for (w, f, lp, hp, note, lb, hb) in waves_this_frame]
-            update_audio_from_multiple(audio_list)
+            fp.update_audio_from_multiple(audio_list)
 
             # plotting: just show the raw period-based waveforms (no filter curves)
             processed = []
             for (w, f, lp, hp, note, lb, hb) in waves_this_frame:
-                orig = _wave_to_period(w, f)
+                orig = fp._wave_to_period(w, f)
                 processed.append(orig)
 
             update_plot(processed)
 
-        cv2.imshow("Hand/Arm Pose Detection", frame)
+        cv2.imshow('Hand/Arm Pose Detection', frame)
 
         key = cv2.waitKey(1) & 0xFF
-        if key == ord('h'):
-            hand_mode = not hand_mode
-            print("Toggled mode:", "HAND MODE" if hand_mode else "ARM MODE")
 
+        # ESC to quit
         if key == 27:
             break
 
@@ -224,16 +220,16 @@ def overlay_lines(frame,
     font = cv2.FONT_HERSHEY_SIMPLEX
 
     def bin_bar(bin_idx, num_bins=8):
-        return "[" + "".join("#" if i <= bin_idx else "-" for i in range(num_bins)) + "]"
+        return '[' + ''.join('#' if i <= bin_idx else '-' for i in range(num_bins)) + ']'
 
     lp_bar = bin_bar(lp_bin_idx)
     hp_bar = bin_bar(hp_bin_idx)
 
     lines = [
-        f"Person {pi+1}",
-        f"Freq: {freq:.0f} Hz ({note_name})",
-        f"LP: {lp_cutoff:.0f} Hz {lp_bar}",
-        f"HP: {hp_cutoff:.0f} Hz {hp_bar}",
+        f'Person {pi+1}',
+        f'Freq: {freq:.0f} Hz ({note_name})',
+        f'LP: {lp_cutoff:.0f} Hz {lp_bar}',
+        f'HP: {hp_cutoff:.0f} Hz {hp_bar}',
     ]
     scales = [0.7, 0.7, 0.6, 0.6]
     thicks = [2, 2, 1, 1]

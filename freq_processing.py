@@ -8,8 +8,23 @@ import math
 
 FS = 44100
 
-# Global musical scale (used for pitch quantization)
-CURRENT_SCALE = 'C major'
+# Terminal-controllable musical scale and mode
+CURRENT_SCALE = 'c major'     # updated via terminal
+CURRENT_MODE = 'hand'         # 'hand' or 'arm', updated via terminal
+
+
+def set_global_scale(scale_name):
+    """Called from the terminal command thread."""
+    global CURRENT_SCALE
+    CURRENT_SCALE = scale_name.lower().strip()
+
+
+def set_global_mode(mode_name):
+    """Called from the terminal command thread."""
+    global CURRENT_MODE
+    if mode_name in ("hand", "arm"):
+        CURRENT_MODE = mode_name
+
 
 # Define pitch range
 MIN_FREQ = 65.41   # C2
@@ -59,17 +74,21 @@ _NOTE_TO_PC = {
     'b': 11, 'cb': 11, 'b#': 0,
 }
 
+
 def _freq_to_midi(f):
     return 69.0 + 12.0 * math.log2(f / 440.0)
 
+
 def _midi_to_freq(m):
     return 440.0 * (2.0 ** ((m - 69.0) / 12.0))
+
 
 def _midi_to_name(m):
     m_int = int(round(m))
     pc = m_int % 12
     octave = m_int // 12 - 1
     return f'{_NOTE_NAMES[pc]}{octave}'
+
 
 def _parse_scale_name(scale_name):
     s = scale_name.strip().lower().replace(' ', '')
@@ -81,40 +100,38 @@ def _parse_scale_name(scale_name):
         mode = 'minor'
         root_str = s.replace('minor', '')
     else:
-        # default to major if mode not specified
         root_str = s
         mode = 'major'
 
     root_str = root_str or 'c'
-    root_str = root_str.replace('♯', '#').replace('♭', 'b')
+    root_str = root_str.replace('♯', "#").replace("♭", "b")
 
-    root_pc = _NOTE_TO_PC.get(root_str, 0)  # default C if unknown
+    root_pc = _NOTE_TO_PC.get(root_str, 0)
     return root_pc, mode
+
 
 def _build_scale_classes(scale_name):
     root_pc, mode = _parse_scale_name(scale_name)
 
-    if mode == 'minor':
-        intervals = [0, 2, 3, 5, 7, 8, 10]  # natural minor
+    if mode == "minor":
+        intervals = [0, 2, 3, 5, 7, 8, 10]
     else:
-        intervals = [0, 2, 4, 5, 7, 9, 11]  # major
+        intervals = [0, 2, 4, 5, 7, 9, 11]
 
-    classes = [ (root_pc + i) % 12 for i in intervals ]
-    return classes
+    return [ (root_pc + i) % 12 for i in intervals ]
+
 
 def quantize_frequency_to_scale(freq, scale_name):
     freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
-    allowed_classes = _build_scale_classes(scale_name)
+    allowed = _build_scale_classes(scale_name)
 
     orig_midi = _freq_to_midi(freq)
+    best_m = orig_midi
+    best_f = freq
+    best_err = float("inf")
 
-    best_midi = orig_midi
-    best_freq = freq
-    best_err = float('inf')
-
-    # search all midi notes and keep ones in scale & within freq range
     for m in range(0, 128):
-        if (m % 12) not in allowed_classes:
+        if (m % 12) not in allowed:
             continue
         f = _midi_to_freq(m)
         if f < MIN_FREQ or f > MAX_FREQ:
@@ -122,16 +139,11 @@ def quantize_frequency_to_scale(freq, scale_name):
         err = abs(m - orig_midi)
         if err < best_err:
             best_err = err
-            best_midi = m
-            best_freq = f
+            best_m = m
+            best_f = f
 
-    note_name = _midi_to_name(best_midi)
-    return best_freq, note_name
+    return best_f, _midi_to_name(best_m)
 
-
-# ---------------------------
-#     Main Pose → Wave
-# ---------------------------
 
 def pose_to_waveform(keypoints):
     # Extract metadata from the end of the list (if present)
