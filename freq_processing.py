@@ -117,10 +117,7 @@ def apply_instrument_profile(period, instrument_name):
     return result.astype(np.float32)
 
 
-# ---------------------------
-# Pitch / Scale Utilities
-# ---------------------------
-
+# Pitch and scale utilities
 # Define pitch range
 MIN_FREQ = 65.41   # C2
 MAX_FREQ = min(1046.5, FS // 2 - 100.0)  # C6
