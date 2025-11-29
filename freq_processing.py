@@ -29,20 +29,11 @@ def set_global_mode(mode_name):
 # Instrument/timbre system
 INSTRUMENT_PROFILES = {
     'fundamental': np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
-
-    # Rough, musical-ish profiles – tweak later by ear if you want
-    'piano': np.array([1.0, 0.8, 0.6, 0.4, 0.25, 0.15, 0.10, 0.05], dtype=np.float32),
-
+    'piano': np.array([1.0, 0.75, 0.55, 0.40, 0.28, 0.20, 0.14, 0.10], dtype=np.float32),
     'flute': np.array([1.0, 0.2, 0.10, 0.05, 0.03, 0.02, 0.01, 0.005], dtype=np.float32),
-
-    # Clarinet: strong odd harmonics
     'clarinet': np.array([1.0, 0.0, 0.7, 0.0, 0.5, 0.0, 0.3, 0.0], dtype=np.float32),
-
-    # Organ: lots of harmonics with slow decay
     'organ': np.array([1.0, 0.9, 0.8, 0.7, 0.6, 0.5, 0.4, 0.3], dtype=np.float32),
-
-    # Trumpet: bright and brassy
-    'trumpet': np.array([1.0, 0.9, 0.7, 0.5, 0.4, 0.3, 0.25, 0.20], dtype=np.float32),
+    'violin': np.array([1.0, 0.95, 1.0, 0.95, 0.85, 0.75, 0.65, 0.55], dtype=np.float32),
 }
 
 # person index (1-based), instrument name (string)
