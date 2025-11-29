@@ -43,8 +43,8 @@ lock = threading.Lock()
 stream = None
 
 # Multiple voices: one period + phase per person
-periods = []    # list of np.ndarray (float32) – one period per voice
-phases = []     # list of ints – phase index per voice
+periods = []    # list of np.ndarray (float32) - one period per voice
+phases = []     # list of ints - phase index per voice
 
 # Per-voice lowpass filters
 cutoffs = []        # list of float cutoff freq per voice (lowpass)
@@ -57,10 +57,7 @@ hp_sos_list = []    # list of SOS filter coefficients (one per voice, highpass)
 hp_zi_list = []     # list of filter state arrays (one per voice, highpass)
 
 
-# ---------------------------
-#  Pitch / Scale Utilities
-# ---------------------------
-
+#  Pitch/scale utilities
 _NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F',
                'F#', 'G', 'G#', 'A', 'A#', 'B']
 
