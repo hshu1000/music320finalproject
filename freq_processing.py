@@ -3,38 +3,283 @@ import sounddevice as sd
 from scipy.signal import resample
 from scipy.interpolate import interp1d
 from scipy import signal
+from scipy.io import wavfile
 import threading
 import math
+import os
 
 FS = 44100
 
-# === REVERB ADDED ===
-REVERB_ON = False
+# ==============================
+#   PEDAL (SUSTAIN / ECHO TAIL)
+# ==============================
+PEDAL_MODE = False          # True = sustain using echo/reverb-like tail
+PEDAL_TIME = 10.0           # approximate sustain time in seconds
 
-def apply_reverb(x, sample_rate=44100, delay_ms=1000, feedback=0.9, mix=0.9):
+REVERB_DELAY_SEC = 0.3      # base delay for echo taps (in seconds)
+# Reverb internal state (simple feedback comb)
+reverb_feedback = 0.8
+reverb_buffer = np.zeros(int(FS * REVERB_DELAY_SEC), dtype=np.float32)
+reverb_idx = 0
+
+
+def _update_reverb_params():
     """
-    Longer and smoother Schroeder-style reverb.
-    delay_ms controls the sense of space.
+    Choose feedback so that the echo decays to about 1% after PEDAL_TIME seconds.
     """
-    delay_samples = int(sample_rate * delay_ms / 1000)
-    if delay_samples <= 0:
+    global reverb_feedback
+    if PEDAL_TIME <= 0.0:
+        reverb_feedback = 0.0
+        return
+    D = REVERB_DELAY_SEC
+    T = PEDAL_TIME
+    # feedback^(T/D) ≈ 0.01  => feedback = 0.01^(D/T)
+    reverb_feedback = 0.01 ** (D / max(T, 1e-3))
+
+
+_update_reverb_params()
+
+
+def set_pedal_mode(on: bool):
+    """
+    Turn sustain/echo pedal mode on or off.
+    When turned off, clear any remaining tail.
+    """
+    global PEDAL_MODE, reverb_buffer, reverb_idx
+    PEDAL_MODE = bool(on)
+    if not PEDAL_MODE:
+        # hard-cut any remaining tail
+        reverb_buffer[:] = 0.0
+        reverb_idx = 0
+    print(f'[pedal] Pedal mode {"ON" if PEDAL_MODE else "OFF"}')
+
+
+def set_pedal_time(seconds: float):
+    """
+    Set approximate sustain time for pedal tail (in seconds).
+    """
+    global PEDAL_TIME
+    try:
+        seconds = float(seconds)
+    except Exception:
+        print('[pedal] Invalid time, must be a number.')
+        return
+    PEDAL_TIME = max(0.5, seconds)
+    _update_reverb_params()
+    print(f'[pedal] sustain time set to {PEDAL_TIME:.2f} s')
+
+
+def process_reverb_block(x: np.ndarray) -> np.ndarray:
+    """
+    Streaming echo / reverb-like effect used for pedal mode.
+    - When PEDAL_MODE is False, returns x unchanged.
+    - When True, uses a feedback comb to create a tail that
+      keeps ringing even when input becomes zero.
+    """
+    global reverb_buffer, reverb_idx, reverb_feedback
+
+    if not PEDAL_MODE or reverb_feedback <= 0.0:
         return x
 
-    y = np.copy(x).astype(np.float32)
+    x = np.asarray(x, dtype=np.float32)
+    y = np.zeros_like(x)
 
-    # Simple feedback delay
-    if delay_samples < len(y):
-        for i in range(delay_samples, len(y)):
-            y[i] += feedback * y[i - delay_samples]
+    buf = reverb_buffer
+    idx = reverb_idx
+    L = len(buf)
 
-    # Normalize to prevent runaway volume
-    y /= (np.max(np.abs(y)) + 1e-6)
+    for n in range(len(x)):
+        delayed = buf[idx]
+        # mix delayed content with dry signal
+        y[n] = x[n] + delayed
+        # update buffer with new feedback
+        buf[idx] = x[n] + delayed * reverb_feedback
+        idx += 1
+        if idx == L:
+            idx = 0
 
-    # Dry/wet mix
-    return (1 - mix) * x + mix * y
+    reverb_idx = idx
 
-# === END REVERB ===
+    peak = np.max(np.abs(y)) + 1e-9
+    if peak > 1.0:
+        y *= 1.0 / peak
+    return y
 
+
+# ==============================
+#           FLANGER
+# ==============================
+FLANGER_ON = False
+FLANGER_RATE = 0.2          # Hz (LFO rate)
+FLANGER_DEPTH_MS = 2.0      # ms modulation depth
+FLANGER_BASE_DELAY_MS = 3.0 # ms base delay
+
+MAX_FLANGER_DELAY_MS = 10.0
+FLANGER_BUFFER_SIZE = int(FS * MAX_FLANGER_DELAY_MS / 1000.0) + 2048
+flanger_buffer = np.zeros(FLANGER_BUFFER_SIZE, dtype=np.float32)
+flanger_idx = 0
+flanger_phase = 0.0
+
+
+def set_flanger_on(on: bool):
+    global FLANGER_ON
+    FLANGER_ON = bool(on)
+    print(f'[flanger] {"ON" if FLANGER_ON else "OFF"}')
+
+
+def set_flanger_params(rate=None, depth_ms=None):
+    global FLANGER_RATE, FLANGER_DEPTH_MS
+    if rate is not None:
+        try:
+            r = float(rate)
+            FLANGER_RATE = max(0.01, min(5.0, r))
+        except Exception:
+            print('[flanger] Invalid rate value.')
+    if depth_ms is not None:
+        try:
+            d = float(depth_ms)
+            FLANGER_DEPTH_MS = max(0.1, min(5.0, d))
+        except Exception:
+            print('[flanger] Invalid depth value.')
+
+    print(f'[flanger] rate={FLANGER_RATE:.2f} Hz, depth={FLANGER_DEPTH_MS:.2f} ms')
+
+
+def apply_flanger_block(x: np.ndarray) -> np.ndarray:
+    """
+    Simple streaming flanger:
+    y[n] = x[n] + 0.5 * x[n - delay(n)]
+    delay(n) is modulated by a sine LFO.
+    """
+    global flanger_buffer, flanger_idx, flanger_phase
+
+    if not FLANGER_ON:
+        return x
+
+    x = np.asarray(x, dtype=np.float32)
+    y = np.zeros_like(x)
+
+    base_delay = int(FLANGER_BASE_DELAY_MS * FS / 1000.0)
+    depth_samples = int(FLANGER_DEPTH_MS * FS / 1000.0)
+    max_delay = int(MAX_FLANGER_DELAY_MS * FS / 1000.0)
+
+    base_delay = max(0, min(base_delay, max_delay))
+    depth_samples = max(0, min(depth_samples, max_delay - base_delay))
+
+    buf = flanger_buffer
+    idx = flanger_idx
+    L = len(buf)
+
+    for n in range(len(x)):
+        # write current sample into delay line
+        buf[idx] = x[n]
+
+        # LFO
+        lfo = math.sin(flanger_phase)
+        flanger_phase += 2.0 * math.pi * FLANGER_RATE / FS
+        lfo_norm = 0.5 * (lfo + 1.0)  # 0..1
+
+        delay = base_delay + int(depth_samples * lfo_norm)
+        read_idx = (idx - delay) % L
+        delayed = buf[read_idx]
+
+        # mix (dry + 0.5 * wet)
+        y[n] = x[n] + 0.5 * delayed
+
+        idx += 1
+        if idx == L:
+            idx = 0
+
+    flanger_idx = idx
+
+    peak = np.max(np.abs(y)) + 1e-9
+    if peak > 1.0:
+        y *= 1.0 / peak
+    return y
+
+
+# ==============================
+#         RECORDING
+# ==============================
+RECORDING = False
+record_buffer = []
+record_filename = ""
+record_lock = threading.Lock()
+
+
+def start_recording(filename: str):
+    """
+    Start recording audio to recordings/<filename>.wav
+    """
+    global RECORDING, record_buffer, record_filename
+
+    if RECORDING:
+        print('[record] Already recording.')
+        return
+
+    if not filename:
+        filename = 'take.wav'
+    if not filename.lower().endswith('.wav'):
+        filename += '.wav'
+
+    os.makedirs('recordings', exist_ok=True)
+    record_filename = os.path.join('recordings', filename)
+
+    with record_lock:
+        record_buffer = []
+
+    RECORDING = True
+    print(f'[record] Recording started -> {record_filename}')
+
+
+def stop_recording():
+    """
+    Stop recording and write the WAV file.
+    """
+    global RECORDING, record_buffer, record_filename
+
+    if not RECORDING:
+        print('[record] Not currently recording.')
+        return
+
+    RECORDING = False
+
+    with record_lock:
+        if not record_buffer:
+            print('[record] No audio captured, nothing saved.')
+            record_filename = ""
+            return
+        audio = np.concatenate(record_buffer)
+        record_buffer = []
+
+    if audio.size == 0:
+        print('[record] No audio captured, nothing saved.')
+        record_filename = ""
+        return
+
+    audio = np.clip(audio, -1.0, 1.0)
+    wav_data = (audio * 32767).astype(np.int16)
+    wavfile.write(record_filename, FS, wav_data)
+    print(f'[record] Saved {record_filename}')
+    record_filename = ""
+
+
+def recording_status():
+    """
+    Print current recording status.
+    """
+    if RECORDING:
+        with record_lock:
+            total_samples = sum(len(chunk) for chunk in record_buffer)
+        seconds = total_samples / float(FS)
+        print(f'[record] Recording... {seconds:.2f} s so far.')
+    else:
+        print('[record] Not recording.')
+
+
+# ==============================
+#  EXISTING SYNTH / SCALE CODE
+# ==============================
 
 # Terminal-controllable musical scale and mode
 CURRENT_SCALE = 'c major'     # updated via terminal
@@ -416,13 +661,12 @@ def update_audio_from_pose(keypoints):
 
 def audio_callback(outdata, frames, time, status):
     global periods, phases, lp_sos_list, lp_zi_list, hp_sos_list, hp_zi_list
-    global LAST_REVERB_TAIL
 
     if status:
         print(f'[audio] Status: {status}')
 
     try:
-        # Copy current DSP state
+        # Copy DSP state snapshot
         with lock:
             local_periods = list(periods)
             local_phases = phases.copy()
@@ -433,40 +677,41 @@ def audio_callback(outdata, frames, time, status):
 
         nvoices = len(local_periods)
 
-        # ============================================
-        #       FIXED: NO INPUT → REVERB TAIL ONLY
-        # ============================================
-        if nvoices == 0:
-            if REVERB_ON:
-                # Use previous tail or initialize
-                if LAST_REVERB_TAIL is None:
-                    LAST_REVERB_TAIL = np.zeros(frames, dtype=np.float32)
-
-                # Feed zero input into reverb to get pure decay
-                silence = np.zeros(frames, dtype=np.float32)
-                new_tail = apply_reverb(silence)
-
-                # Blend previous tail to create natural decay
-                tail = 0.85 * LAST_REVERB_TAIL + 0.15 * new_tail
-
-                # Output the tail
-                if outdata.ndim == 1:
-                    outdata[:] = tail
-                else:
-                    for ch in range(outdata.shape[1]):
-                        outdata[:, ch] = tail
-
-                # Save for next iteration
-                LAST_REVERB_TAIL = tail.copy()
-                return
-
-            # Reverb OFF → full silence
+        if not (
+            len(local_phases) == len(local_lp_sos_list) ==
+            len(local_lp_zi_list) == len(local_hp_sos_list) ==
+            len(local_hp_zi_list) == nvoices
+        ):
             outdata[:] = 0.0
-            LAST_REVERB_TAIL = None
             return
 
         # ============================================
-        #      NORMAL CASE: A PERSON IS DETECTED
+        #        NO INPUT CASE (nvoices == 0)
+        # ============================================
+        if nvoices == 0:
+            # Pedal ON: continue ringing via reverb tail
+            if PEDAL_MODE:
+                dry = np.zeros(frames, dtype=np.float32)
+                out = process_reverb_block(dry)
+                if FLANGER_ON:
+                    out = apply_flanger_block(out)
+            else:
+                out = np.zeros(frames, dtype=np.float32)
+
+            # Recording (tail or silence)
+            if RECORDING:
+                with record_lock:
+                    record_buffer.append(out.copy())
+
+            if outdata.ndim == 1:
+                outdata[:] = out
+            else:
+                for ch in range(outdata.shape[1]):
+                    outdata[:, ch] = out
+            return
+
+        # ============================================
+        #      NORMAL CASE: AT LEAST ONE VOICE
         # ============================================
 
         out = np.zeros(frames, dtype=np.float32)
@@ -509,12 +754,15 @@ def audio_callback(outdata, frames, time, status):
         if peak > 0.3:
             out *= (0.3 / peak)
 
-        # === Apply reverb (wet only to LAST_REVERB_TAIL) ===
-        if REVERB_ON:
-            out = apply_reverb(out)
-            LAST_REVERB_TAIL = out.copy()
-        else:
-            LAST_REVERB_TAIL = None
+        # Pedal (reverb / echo tail) then flanger
+        out = process_reverb_block(out)
+        if FLANGER_ON:
+            out = apply_flanger_block(out)
+
+        # Recording
+        if RECORDING:
+            with record_lock:
+                record_buffer.append(out.copy())
 
         # Output audio
         if outdata.ndim == 1:
@@ -537,7 +785,6 @@ def audio_callback(outdata, frames, time, status):
     except Exception as e:
         print(f'[audio_callback] Error: {e}')
         outdata[:] = 0.0
-
 
 
 def start_audio_thread():

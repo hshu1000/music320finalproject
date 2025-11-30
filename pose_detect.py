@@ -197,10 +197,9 @@ def start_pose_detection():
                 processed.append(shaped)
 
             update_plot(processed)
-
         else:
-            # <<< THIS IS THE IMPORTANT PART >>>
-            # No hands / arms detected this frame → hard stop all audio
+            # No hands / arms detected this frame → tell synth there are no voices.
+            # Pedal mode decides whether tail rings or hard-cuts to silence.
             fp.update_audio_from_multiple([])
 
         cv2.imshow('Hand/Arm Pose Detection', frame)
