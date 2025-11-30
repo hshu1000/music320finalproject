@@ -16,6 +16,7 @@ def terminal_command_loop():
     print('  scale <name>              -> set musical scale (e.g. "c major", "eb minor")')
     print('  instrument personN <name> -> set instrument for that person index')
     print(f'     available instruments: {", ".join(fp.list_instruments())}')
+    print('  reverb on/off             -> toggle reverb')   # <<< ADDED
     print('  help                      -> show this help')
     print('  quit / exit               -> stop this listener (synth keeps running)')
     print('====================================\n')
@@ -39,27 +40,34 @@ def terminal_command_loop():
                 fp.set_global_scale(scale)
                 print(f'[terminal] Scale set to {fp.CURRENT_SCALE}')
 
-            # Instrument assignment: instrument personN <name>
+            # Instrument assignment
             elif line.startswith('instrument '):
                 parts = line.split()
                 if len(parts) >= 3:
-                    person_token = parts[1]  # expect 'person1', 'person2', ...
+                    person_token = parts[1]
                     if not person_token.startswith('person'):
                         print('[terminal] Usage: instrument personN <instrument_name>')
                         continue
                     idx_str = person_token[len('person'):]
                     if not idx_str.isdigit():
-                        print('[terminal] Person index must be an integer, e.g. person1, person2')
+                        print('[terminal] Person index must be an integer')
                         continue
                     person_index = int(idx_str)
-                    instr_name = ' '.join(parts[2:])  # e.g. 'piano'
-
+                    instr_name = ' '.join(parts[2:])
                     fp.set_person_instrument(person_index, instr_name)
-                    # set_person_instrument itself prints success / error
                 else:
                     print('[terminal] Usage: instrument personN <instrument_name>')
 
-            # Exit terminal thread
+            # === REVERB TOGGLE ADDED ===
+            elif line == 'reverb on':
+                fp.REVERB_ON = True
+                print('[terminal] Reverb ENABLED')
+
+            elif line == 'reverb off':
+                fp.REVERB_ON = False
+                print('[terminal] Reverb DISABLED')
+            # ===========================
+
             elif line in ('quit', 'exit'):
                 print('[terminal] Stopping terminal loop (synth continues).')
                 break
@@ -69,6 +77,7 @@ def terminal_command_loop():
                 print('  mode hand / mode arm')
                 print('  scale <name>')
                 print('  instrument personN <instrument_name>')
+                print('  reverb on/off')
                 print(f'     available instruments: {", ".join(fp.list_instruments())}')
                 print('  quit / exit')
 
@@ -78,17 +87,12 @@ def terminal_command_loop():
 
 
 def main():
-    # Start matplotlib figure
     init_plot()
-
-    # Start audio callback stream
     fp.start_audio_thread()
 
-    # Start terminal control loop in a background thread
     t = threading.Thread(target=terminal_command_loop, daemon=True)
     t.start()
 
-    # Start pose detection
     start_pose_detection()
 
 
