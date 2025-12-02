@@ -10,9 +10,7 @@ import os
 
 FS = 44100
 
-# ==============================
-#   PEDAL (SUSTAIN / ECHO TAIL)
-# ==============================
+# Pedal effect
 PEDAL_MODE = False          # True = sustain using echo/reverb-like tail
 PEDAL_TIME = 10.0           # approximate sustain time in seconds
 
@@ -106,9 +104,7 @@ def process_reverb_block(x: np.ndarray) -> np.ndarray:
     return y
 
 
-# ==============================
-#           FLANGER
-# ==============================
+# Flanger
 FLANGER_ON = False
 FLANGER_RATE = 0.2          # Hz (LFO rate)
 FLANGER_DEPTH_MS = 2.0      # ms modulation depth
@@ -198,9 +194,7 @@ def apply_flanger_block(x: np.ndarray) -> np.ndarray:
     return y
 
 
-# ==============================
-#         RECORDING
-# ==============================
+# Recording
 RECORDING = False
 record_buffer = []
 record_filename = ""
@@ -276,10 +270,6 @@ def recording_status():
     else:
         print('[record] Not recording.')
 
-
-# ==============================
-#  EXISTING SYNTH / SCALE CODE
-# ==============================
 
 # Terminal-controllable musical scale and mode
 CURRENT_SCALE = 'c major'     # updated via terminal
@@ -685,11 +675,9 @@ def audio_callback(outdata, frames, time, status):
             outdata[:] = 0.0
             return
 
-        # ============================================
-        #        NO INPUT CASE (nvoices == 0)
-        # ============================================
+        # No input case
         if nvoices == 0:
-            # Pedal ON: continue ringing via reverb tail
+            # Pedal on
             if PEDAL_MODE:
                 dry = np.zeros(frames, dtype=np.float32)
                 out = process_reverb_block(dry)
@@ -698,7 +686,7 @@ def audio_callback(outdata, frames, time, status):
             else:
                 out = np.zeros(frames, dtype=np.float32)
 
-            # Recording (tail or silence)
+            # Recording
             if RECORDING:
                 with record_lock:
                     record_buffer.append(out.copy())
@@ -710,10 +698,7 @@ def audio_callback(outdata, frames, time, status):
                     outdata[:, ch] = out
             return
 
-        # ============================================
-        #      NORMAL CASE: AT LEAST ONE VOICE
-        # ============================================
-
+        # At least one voice case
         out = np.zeros(frames, dtype=np.float32)
 
         for v in range(nvoices):
@@ -754,7 +739,7 @@ def audio_callback(outdata, frames, time, status):
         if peak > 0.3:
             out *= (0.3 / peak)
 
-        # Pedal (reverb / echo tail) then flanger
+        # Pedal then flanger
         out = process_reverb_block(out)
         if FLANGER_ON:
             out = apply_flanger_block(out)
