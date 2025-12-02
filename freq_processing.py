@@ -10,7 +10,6 @@ import os
 
 FS = 44100
 
-<<<<<<< Updated upstream
 # Pedal effect
 PEDAL_MODE = False          # True = sustain using echo/reverb-like tail
 PEDAL_TIME = 10.0           # approximate sustain time in seconds
@@ -270,34 +269,6 @@ def recording_status():
         print(f'[record] Recording... {seconds:.2f} s so far.')
     else:
         print('[record] Not recording.')
-=======
-# === REVERB ADDED ===
-REVERB_ON = False
-
-def apply_reverb(x, sample_rate=44100, delay_ms=1000, feedback=0.9, mix=0.9):
-    """
-    Longer and smoother Schroeder-style reverb.
-    delay_ms controls the sense of space.
-    """
-    delay_samples = int(sample_rate * delay_ms / 1000)
-    if delay_samples <= 0:
-        return x
-
-    y = np.copy(x).astype(np.float32)
-
-    # Simple feedback delay
-    if delay_samples < len(y):
-        for i in range(delay_samples, len(y)):
-            y[i] += feedback * y[i - delay_samples]
-
-    # Normalize to prevent runaway volume
-    y /= (np.max(np.abs(y)) + 1e-6)
-
-    # Dry/wet mix
-    return (1 - mix) * x + mix * y
-
-# === END REVERB ===
->>>>>>> Stashed changes
 
 
 # Terminal-controllable musical scale and mode
@@ -680,17 +651,12 @@ def update_audio_from_pose(keypoints):
 
 def audio_callback(outdata, frames, time, status):
     global periods, phases, lp_sos_list, lp_zi_list, hp_sos_list, hp_zi_list
-    global LAST_REVERB_TAIL
 
     if status:
         print(f'[audio] Status: {status}')
 
     try:
-<<<<<<< Updated upstream
         # Copy DSP state snapshot
-=======
-        # Copy current DSP state
->>>>>>> Stashed changes
         with lock:
             local_periods = list(periods)
             local_phases = phases.copy()
@@ -701,47 +667,14 @@ def audio_callback(outdata, frames, time, status):
 
         nvoices = len(local_periods)
 
-<<<<<<< Updated upstream
         if not (
             len(local_phases) == len(local_lp_sos_list) ==
             len(local_lp_zi_list) == len(local_hp_sos_list) ==
             len(local_hp_zi_list) == nvoices
         ):
-=======
-        # ============================================
-        #       FIXED: NO INPUT → REVERB TAIL ONLY
-        # ============================================
-        if nvoices == 0:
-            if REVERB_ON:
-                # Use previous tail or initialize
-                if LAST_REVERB_TAIL is None:
-                    LAST_REVERB_TAIL = np.zeros(frames, dtype=np.float32)
-
-                # Feed zero input into reverb to get pure decay
-                silence = np.zeros(frames, dtype=np.float32)
-                new_tail = apply_reverb(silence)
-
-                # Blend previous tail to create natural decay
-                tail = 0.85 * LAST_REVERB_TAIL + 0.15 * new_tail
-
-                # Output the tail
-                if outdata.ndim == 1:
-                    outdata[:] = tail
-                else:
-                    for ch in range(outdata.shape[1]):
-                        outdata[:, ch] = tail
-
-                # Save for next iteration
-                LAST_REVERB_TAIL = tail.copy()
-                return
-
-            # Reverb OFF → full silence
->>>>>>> Stashed changes
             outdata[:] = 0.0
-            LAST_REVERB_TAIL = None
             return
 
-<<<<<<< Updated upstream
         # No input case
         if nvoices == 0:
             # Pedal on
@@ -764,11 +697,6 @@ def audio_callback(outdata, frames, time, status):
                 for ch in range(outdata.shape[1]):
                     outdata[:, ch] = out
             return
-=======
-        # ============================================
-        #      NORMAL CASE: A PERSON IS DETECTED
-        # ============================================
->>>>>>> Stashed changes
 
         # At least one voice case
         out = np.zeros(frames, dtype=np.float32)
@@ -811,7 +739,6 @@ def audio_callback(outdata, frames, time, status):
         if peak > 0.3:
             out *= (0.3 / peak)
 
-<<<<<<< Updated upstream
         # Pedal then flanger
         out = process_reverb_block(out)
         if FLANGER_ON:
@@ -821,14 +748,6 @@ def audio_callback(outdata, frames, time, status):
         if RECORDING:
             with record_lock:
                 record_buffer.append(out.copy())
-=======
-        # === Apply reverb (wet only to LAST_REVERB_TAIL) ===
-        if REVERB_ON:
-            out = apply_reverb(out)
-            LAST_REVERB_TAIL = out.copy()
-        else:
-            LAST_REVERB_TAIL = None
->>>>>>> Stashed changes
 
         # Output audio
         if outdata.ndim == 1:
@@ -851,7 +770,6 @@ def audio_callback(outdata, frames, time, status):
     except Exception as e:
         print(f'[audio_callback] Error: {e}')
         outdata[:] = 0.0
-
 
 
 def start_audio_thread():
