@@ -18,20 +18,22 @@ The system uses:
 ```bash
 git clone https://github.com/<your-username>/<your-repo>.git
 cd <your-repo>
+```
 
-1.2 Create the Conda Environment
+### 1.2 Create the Conda Environment
 
 You must create the environment using the provided environment.yml file
-(see: environment.yml in this repo — referenced from your uploaded file).
 
 ```bash
 conda env create -f environment.yml
 conda activate music320finalproject
+```
 
 If the environment.yml changes later:
 
 ```bash 
 conda env update -f environment.yml --prune
+```
 
 ## 2. Project Structure
 ```bash
@@ -43,13 +45,14 @@ conda env update -f environment.yml --prune
 ├── plotter.py               # Waveform + camera + overlays plotting
 ├── diagrams.py              # System and concept diagrams
 └── README.md
-
+```
 
 ## 3. Running the System
 
 Launch the main application:
 ```bash
 python pose_synth_launcher.py
+```
 
 This will open:
 - Webcam feed with pose overlays
@@ -71,3 +74,21 @@ Commands:
   pedal on/off              -> enable or disable 10-second reverb tail
   pedal time <sec>          -> adjust reverb/echo duration
   quit                      -> exit program
+```
+
+## 5. System Requirements
+
+- macOS or Linux recommended
+- A webcam
+- Low-latency audio output
+- Python 3.9 (installed via environment.yml)
+
+## 6. Contact
+
+Luke Qiao
+Stanford University
+lkqiao@stanford.edu
+
+Hannah Shu
+Stanford University
+hshu100@stanford.edu
