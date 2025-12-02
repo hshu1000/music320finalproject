@@ -16,6 +16,7 @@ def terminal_command_loop():
     print('  scale <name>              -> set musical scale (e.g. "c major", "eb minor")')
     print('  instrument personN <name> -> set instrument for that person index')
     print(f'     available instruments: {", ".join(fp.list_instruments())}')
+<<<<<<< Updated upstream
     print('  pedal on/off              -> sustain tail using echo/reverb')
     print('  pedal time <sec>          -> set sustain length (approx seconds)')
     print('  flanger on/off            -> toggle flanger effect')
@@ -24,6 +25,9 @@ def terminal_command_loop():
     print('  record start <name>       -> start WAV recording (recordings/)')
     print('  record stop               -> stop and save recording')
     print('  record status             -> show recording status')
+=======
+    print('  reverb on/off             -> toggle reverb')   # <<< ADDED
+>>>>>>> Stashed changes
     print('  help                      -> show this help')
     print('  quit / exit               -> stop this listener (synth keeps running)')
     print('====================================\n')
@@ -67,6 +71,7 @@ def terminal_command_loop():
                 else:
                     print('[terminal] Usage: instrument personN <instrument_name>')
 
+<<<<<<< Updated upstream
             # Pedal / sustain (also accept legacy "reverb" command)
             elif line in ('pedal on', 'reverb on'):
                 fp.set_pedal_mode(True)
@@ -121,6 +126,18 @@ def terminal_command_loop():
                 fp.recording_status()
 
             # Exit terminal thread
+=======
+            # === REVERB TOGGLE ADDED ===
+            elif line == 'reverb on':
+                fp.REVERB_ON = True
+                print('[terminal] Reverb ENABLED')
+
+            elif line == 'reverb off':
+                fp.REVERB_ON = False
+                print('[terminal] Reverb DISABLED')
+            # ===========================
+
+>>>>>>> Stashed changes
             elif line in ('quit', 'exit'):
                 print('[terminal] Stopping terminal loop (synth continues).')
                 break
@@ -130,6 +147,7 @@ def terminal_command_loop():
                 print('  mode hand / mode arm')
                 print('  scale <name>')
                 print('  instrument personN <instrument_name>')
+<<<<<<< Updated upstream
                 print('  pedal on/off')
                 print('  pedal time <sec>')
                 print('  flanger on/off')
@@ -138,6 +156,9 @@ def terminal_command_loop():
                 print('  record start <name>')
                 print('  record stop')
                 print('  record status')
+=======
+                print('  reverb on/off')
+>>>>>>> Stashed changes
                 print(f'     available instruments: {", ".join(fp.list_instruments())}')
                 print('  quit / exit')
 
@@ -147,17 +168,12 @@ def terminal_command_loop():
 
 
 def main():
-    # Start matplotlib figure
     init_plot()
-
-    # Start audio callback stream
     fp.start_audio_thread()
 
-    # Start terminal control loop in a background thread
     t = threading.Thread(target=terminal_command_loop, daemon=True)
     t.start()
 
-    # Start pose detection
     start_pose_detection()
 
 

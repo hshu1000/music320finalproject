@@ -202,6 +202,11 @@ def start_pose_detection():
             # Pedal mode decides whether tail rings or hard-cuts to silence.
             fp.update_audio_from_multiple([])
 
+        else:
+            # <<< THIS IS THE IMPORTANT PART >>>
+            # No hands / arms detected this frame → hard stop all audio
+            fp.update_audio_from_multiple([])
+
         cv2.imshow('Hand/Arm Pose Detection', frame)
 
         key = cv2.waitKey(1) & 0xFF
