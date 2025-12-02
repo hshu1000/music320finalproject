@@ -16,8 +16,8 @@ The system uses:
 ### 1.1 Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
+git clone https://github.com/hshu1000/music320finalproject.git
+cd music320finalproject
 ```
 
 ### 1.2 Create the Conda Environment
