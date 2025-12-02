@@ -11,7 +11,7 @@ The system uses:
 
 ---
 
-## 📦 1. Installation & Environment Setup
+## 1. Installation & Environment Setup
 
 ### 1.1 Clone the Repository
 
