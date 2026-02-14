@@ -39,8 +39,8 @@ def rebuild_layout(n):
         # Single line for FFT
         lf_orig, = ax_f.plot([], [], color='tab:blue')
 
-        ax_w.set_title(f"Person {i+1} – Waveform")
-        ax_f.set_title(f"Person {i+1} – FFT")
+        ax_w.set_title(f"Person {i+1} - Waveform")
+        ax_f.set_title(f"Person {i+1} - FFT")
         ax_w.legend(loc='upper right')
 
         axes_wave.append(ax_w)
