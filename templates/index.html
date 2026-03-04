@@ -25,11 +25,7 @@
       margin:0;
       font-family: var(--font);
       color: var(--text);
-      background:
-        radial-gradient(1100px 700px at 18% 10%, rgba(124,92,255,0.35), transparent 55%),
-        radial-gradient(900px 600px at 80% 20%, rgba(34,197,94,0.18), transparent 60%),
-        radial-gradient(1000px 800px at 50% 110%, rgba(59,130,246,0.14), transparent 55%),
-        var(--bg);
+      background: var(--bg);
       min-height:100vh;
     }
     .wrap{
@@ -233,6 +229,26 @@
       border: 1px solid rgba(255,255,255,0.10);
       color: rgba(255,255,255,0.85);
     }
+
+    /* NEW: camera preview styling */
+    .cam-wrap{
+      margin-top: 14px;
+    }
+    .cam{
+      width: 100%;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.20);
+      display:block;
+      aspect-ratio: 16 / 9;
+      object-fit: cover;
+    }
+    .cam-row{
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
   </style>
 </head>
 
@@ -242,8 +258,8 @@
       <div class="title">
         <h1>Pose Synth Control Panel</h1>
         <p class="sub">
-          Control your pose to audio system from a modern dashboard. This starts the camera + audio
-          pipeline on the machine running Flask.
+          Control your pose to audio system from a modern dashboard. This runs the audio pipeline locally,
+          and streams your camera into this page.
         </p>
       </div>
 
@@ -337,11 +353,20 @@
             <button class="btn bad" onclick="recordStop()">Stop recording</button>
           </div>
 
+          <!-- NEW: Camera preview section -->
+          <div class="cam-wrap">
+            <div class="mini">Camera preview (streams from this machine)</div>
+            <img id="cam" class="cam" alt="Camera preview (off)" />
+            <div class="cam-row">
+              <button class="btn" onclick="cameraStart()">Start camera</button>
+              <button class="btn" onclick="cameraStop()">Stop camera</button>
+            </div>
+          </div>
+
           <div id="toast" class="toast"></div>
 
           <div class="footer">
-            Tip: You should see an OpenCV window (camera feed) and a matplotlib window once started.
-            If you do not, check your terminal output for errors.
+            Tip: If the camera preview is blank, click “Start camera” and allow camera access for Python/Terminal.
           </div>
         </div>
       </div>
@@ -414,7 +439,7 @@
     const txt = document.getElementById("statusText");
     if(on){
       dot.classList.add("on");
-      txt.textContent = "Running (camera + audio local)";
+      txt.textContent = "Running (audio local)";
     } else {
       dot.classList.remove("on");
       txt.textContent = "Not started";
@@ -490,8 +515,6 @@
     const res = await fetch("/api/state");
     const j = await res.json();
     applyStateToUI(j);
-
-    // if recording is on, show that in toast occasionally? keep simple:
     await refreshRecordings();
   }
 
@@ -557,12 +580,33 @@
     await refreshRecordings();
   }
 
-  // Initial load (server-rendered state passed via Jinja)
+  // NEW: camera controls (MJPEG stream)
+  async function cameraStart(){
+    await postJSON("/api/camera/start", {});
+    const cam = document.getElementById("cam");
+    cam.src = "/video_feed?" + Date.now(); // cache-bust
+    toast("Camera started");
+  }
+
+  async function cameraStop(){
+    await postJSON("/api/camera/stop", {});
+    const cam = document.getElementById("cam");
+    cam.removeAttribute("src");
+    toast("Camera stopped");
+  }
+
+  // Initial load
   (function init(){
     const state = {{ state | tojson }};
     applyStateToUI(state);
     setRunningUI(false);
     refreshRecordings();
+
+    // If backend says camera is on, start the stream immediately
+    if(state.camera_on){
+      const cam = document.getElementById("cam");
+      cam.src = "/video_feed?" + Date.now();
+    }
   })();
 </script>
 </body>

@@ -1,6 +1,7 @@
 import cv2
 from ultralytics import YOLO
-import mediapipe as mp
+#import mediapipe as mp
+from mediapipe import solutions as mp_solutions
 
 import freq_processing as fp
 from plotter import update_plot
@@ -9,12 +10,11 @@ from plotter import update_plot
 def start_pose_detection():
     model_pose = YOLO('yolov8s-pose.pt')
 
-    mp_hands = mp.solutions.hands
-    hands = mp_hands.Hands(
-        max_num_hands=10,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5
-    )
+    mp_hands = mp_solutions.hands
+    hands = mp_hands.Hands(max_num_hands=10,
+            min_detection_confidence=0.5,
+            min_tracking_confidence=0.5)
+    mp_drawing = mp_solutions.drawing_utils
 
     cap = cv2.VideoCapture(0)
 
