@@ -2,12 +2,11 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 csv_file = "analysis_scripts/arm_mode_triangle_approx.csv"  
 
 A = -0.3 
-# T = 1.75e-3
-T = 4e-3
+T = 1.75e-3
+# T = 4e-3
 f0 = 1 / T  
 num_repeats_for_fft_plot = 64
 num_harmonics_for_thd = 10        
@@ -32,9 +31,9 @@ print(f"fs = {fs:.3f} Hz")
 print(f"f0 = {f0:.3f} Hz")
 
 # Define reference signal
-# s_ref = A * np.sin(2 * np.pi * f0 * t)
-phase = (t / T) % 1
-s_ref = 4 * A * np.abs(phase - 0.5) - A
+s_ref = A * np.sin(2 * np.pi * f0 * t)
+# phase = (t / T) % 1
+# s_ref = 4 * A * np.abs(phase - 0.5) - A
 
 # Calculate cross-correlation
 corr = np.correlate(x - np.mean(x), s_ref - np.mean(s_ref), mode="full")
@@ -42,9 +41,10 @@ lags = np.arange(-N + 1, N)
 best_lag = lags[np.argmax(corr)]
 
 # Shift reference by optimial amount of samples
-t_shift = best_lag * dt
-phase = ((t - t_shift) / T) % 1
-s_aligned = 4 * A * np.abs(phase - 0.5) - A
+s_aligned = np.roll(s_ref, best_lag)
+# t_shift = best_lag * dt
+# phase = ((t - t_shift) / T) % 1
+# s_aligned = 4 * A * np.abs(phase - 0.5) - A
 
 # Calculate error metrics
 mse = np.mean((x - s_aligned) ** 2)
