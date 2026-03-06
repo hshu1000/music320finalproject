@@ -5,8 +5,8 @@ import matplotlib.pyplot as plt
 csv_file = "analysis_scripts/arm_mode_triangle_approx.csv"  
 
 A = -0.3 
-T = 1.75e-3
-# T = 4e-3
+# T = 1.75e-3
+T = 4e-3
 f0 = 1 / T  
 num_repeats_for_fft_plot = 64
 num_harmonics_for_thd = 10        
@@ -31,9 +31,9 @@ print(f"fs = {fs:.3f} Hz")
 print(f"f0 = {f0:.3f} Hz")
 
 # Define reference signal
-s_ref = A * np.sin(2 * np.pi * f0 * t)
-# phase = (t / T) % 1
-# s_ref = 4 * A * np.abs(phase - 0.5) - A
+# s_ref = A * np.sin(2 * np.pi * f0 * t)
+phase = (t / T) % 1
+s_ref = 4 * A * np.abs(phase - 0.5) - A
 
 # Calculate cross-correlation
 corr = np.correlate(x - np.mean(x), s_ref - np.mean(s_ref), mode="full")
@@ -41,10 +41,10 @@ lags = np.arange(-N + 1, N)
 best_lag = lags[np.argmax(corr)]
 
 # Shift reference by optimial amount of samples
-s_aligned = np.roll(s_ref, best_lag)
-# t_shift = best_lag * dt
-# phase = ((t - t_shift) / T) % 1
-# s_aligned = 4 * A * np.abs(phase - 0.5) - A
+# s_aligned = np.roll(s_ref, best_lag)
+t_shift = best_lag * dt
+phase = ((t - t_shift) / T) % 1
+s_aligned = 4 * A * np.abs(phase - 0.5) - A
 
 # Calculate error metrics
 mse = np.mean((x - s_aligned) ** 2)
@@ -92,6 +92,12 @@ X_rep = np.fft.rfft(x_rep)
 freqs_rep = np.fft.rfftfreq(N_rep, d=dt)
 amps_rep_peak = 2 * np.abs(X_rep) / N_rep
 
+s_ref_ac = s_aligned - np.mean(s_aligned)
+s_ref_rep = np.tile(s_ref_ac, num_repeats_for_fft_plot)
+
+X_ref = np.fft.rfft(s_ref_rep)
+amps_ref_peak = 2 * np.abs(X_ref) / len(s_ref_rep)
+
 # Plots
 plt.figure(figsize=(8, 4))
 plt.plot(t_ms, x, label="Hand mode PBW")
@@ -109,12 +115,17 @@ plt.ylabel("Peak amplitude")
 plt.title("First 10 Harmonics")
 plt.tight_layout()
 
-plt.figure(figsize=(9, 4))
+plt.figure(figsize=(9,4))
 mask = freqs_rep <= fft_plot_max_freq
-plt.plot(freqs_rep[mask], amps_rep_peak[mask])
-plt.xlabel("Frequency (Hz)")
+
+plt.plot(freqs_rep[mask]/1e3, amps_rep_peak[mask], label="PBW FFT")
+plt.plot(freqs_rep[mask]/1e3, amps_ref_peak[mask], "--", label="Reference signal FFT")
+
+plt.xlabel("Frequency (kHz)")
 plt.ylabel("Peak amplitude")
-plt.title(f"FFT Magnitude")
+plt.title("FFT Magnitude Comparison")
+plt.legend()
 plt.tight_layout()
+
 
 plt.show()
