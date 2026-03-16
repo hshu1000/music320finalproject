@@ -1,6 +1,6 @@
 import numpy as np
 import matplotlib
-matplotlib.use("Agg")
+# matplotlib.use("Agg")  # Non-interactive backend - commented out to allow plot display
 import matplotlib.pyplot as plt
 
 

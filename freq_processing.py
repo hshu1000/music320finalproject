@@ -106,9 +106,9 @@ def process_reverb_block(x: np.ndarray) -> np.ndarray:
 
 # Flanger
 FLANGER_ON = False
-FLANGER_RATE = 0.2          # Hz (LFO rate)
-FLANGER_DEPTH_MS = 2.0      # ms modulation depth
-FLANGER_BASE_DELAY_MS = 3.0 # ms base delay
+FLANGER_RATE = 0.7          # Hz (LFO rate)
+FLANGER_DEPTH_MS = 5.0      # ms modulation depth
+FLANGER_BASE_DELAY_MS = 2.0 # ms base delay
 
 MAX_FLANGER_DELAY_MS = 10.0
 FLANGER_BUFFER_SIZE = int(FS * MAX_FLANGER_DELAY_MS / 1000.0) + 2048
@@ -179,8 +179,8 @@ def apply_flanger_block(x: np.ndarray) -> np.ndarray:
         read_idx = (idx - delay) % L
         delayed = buf[read_idx]
 
-        # mix (dry + 0.5 * wet)
-        y[n] = x[n] + 0.5 * delayed
+        # mix (dry + 1.0 * wet) - more pronounced flanger effect
+        y[n] = x[n] + 1.0 * delayed
 
         idx += 1
         if idx == L:
@@ -364,8 +364,8 @@ def apply_instrument_profile(period, instrument_name):
 
 
 # Pitch and scale utilities
-MIN_FREQ = 65.41   # C2
-MAX_FREQ = min(1046.5, FS // 2 - 100.0)  # C6
+MIN_FREQ = 27.5   # A0
+MAX_FREQ = min(4186, FS // 2 - 100.0)  # C8
 
 MIN_CUTOFF = (MIN_FREQ + MAX_FREQ) / 2
 MAX_CUTOFF = min(FS // 2 - 100.0, 4000.0)
@@ -507,20 +507,18 @@ def pose_to_waveform(keypoints):
     tu = np.linspace(0, t[-1], L)
     wave = np.interp(tu, t, ys).astype(np.float32)
 
-    RAW_MIN = 10
-    RAW_MAX = 1000
+    # RAW_MIN = 10
+    # RAW_MAX = 1000
 
-    raw_width = float(t[-1])
-    norm = (RAW_MAX - raw_width) / (RAW_MAX - RAW_MIN)
-    norm = np.clip(norm, 0.0, 1.0)
+    # raw_width = float(t[-1])
+    # norm = (RAW_MAX - raw_width) / (RAW_MAX - RAW_MIN)
+    # norm = np.clip(norm, 0.0, 1.0)
 
-    gamma = 0.4
-    v = norm ** gamma
+    # gamma = 0.4
+    # v = norm ** gamma
 
-    freq = float(MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** v))
-    freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
-
-    freq_q, note_name = quantize_frequency_to_scale(freq, CURRENT_SCALE)
+    # freq = float(MIN_FREQ * ((MAX_FREQ / MIN_FREQ) ** v))
+    # freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
 
     avg_y = None
     avg_x = None
@@ -539,6 +537,23 @@ def pose_to_waveform(keypoints):
                 frame_w = int(metadata[3])
         except Exception:
             pass
+
+    # Calculate LAMBDA_MAX based on actual frame diagonal
+    LAMBDA_MIN = 10.0
+    LAMBDA_MAX = float(np.sqrt(frame_w**2 + frame_h**2)) / 3
+
+    # Gesture size to frequency mapping
+    lam = float(np.linalg.norm(pts[-1] - pts[0]))
+    lam = float(np.clip(lam, LAMBDA_MIN, LAMBDA_MAX))
+
+    s = np.log2(lam / LAMBDA_MAX) / np.log2(LAMBDA_MIN / LAMBDA_MAX)
+    s = float(np.clip(s, 0.0, 1.0))
+    freq = float(MIN_FREQ + s * (MAX_FREQ - MIN_FREQ))
+    freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
+
+    freq_q, note_name = quantize_frequency_to_scale(freq, CURRENT_SCALE)
+    # print('lam', lam, f'({LAMBDA_MIN}..{LAMBDA_MAX})', f's = {s}', freq_q, freq, note_name)
+    # print(freq_q, note_name, f'(raw freq: {freq:.2f} Hz)', f'gesture size: {lam:.1f}px')
 
     NUM_BINS = 8
 
@@ -569,7 +584,7 @@ def pose_to_waveform(keypoints):
 
 def _wave_to_period(wave, freq):
     freq = float(np.clip(freq, MIN_FREQ, MAX_FREQ))
-    ps = max(32, int(FS / freq))
+    ps = max(2, int(FS / freq))
     p = resample(wave, ps).astype(np.float32)
     p /= (np.max(np.abs(p)) + 1e-6)
     p *= 0.3
@@ -633,15 +648,48 @@ def update_audio_from_multiple(wave_freq_cutoff_list):
 
     with lock:
         periods = new_periods
-        phases = [0] * len(new_periods)
+        
+        # Preserve existing phases for continuity, only initialize new voices
+        if len(new_periods) > len(phases):
+            phases.extend([0] * (len(new_periods) - len(phases)))
+        else:
+            phases = phases[:len(new_periods)]
 
         cutoffs = new_cutoffs
-        lp_sos_list = new_sos_list
-        lp_zi_list = new_zi_list
+        
+        # Preserve existing LP filter states for continuity
+        # Only create new states for newly added voices
+        num_old_lp = len(lp_sos_list)
+        num_new_lp = len(new_sos_list)
+        
+        if num_new_lp > num_old_lp:
+            # More voices - keep old states, add new ones
+            lp_sos_list = lp_sos_list + new_sos_list[num_old_lp:]
+            lp_zi_list = lp_zi_list + new_zi_list[num_old_lp:]
+        else:
+            # Same or fewer voices
+            lp_sos_list = lp_sos_list[:num_new_lp]
+            lp_zi_list = lp_zi_list[:num_new_lp]
+        
+        # Update the sos coefficients for all voices (in case cutoff changed)
+        for i in range(min(num_old_lp, num_new_lp)):
+            lp_sos_list[i] = new_sos_list[i]
+        
+        # Same for HP filters
+        num_old_hp = len(hp_sos_list)
+        num_new_hp = len(new_hp_sos_list)
+        
+        if num_new_hp > num_old_hp:
+            hp_sos_list = hp_sos_list + new_hp_sos_list[num_old_hp:]
+            hp_zi_list = hp_zi_list + new_hp_zi_list[num_old_hp:]
+        else:
+            hp_sos_list = hp_sos_list[:num_new_hp]
+            hp_zi_list = hp_zi_list[:num_new_hp]
+        
+        for i in range(min(num_old_hp, num_new_hp)):
+            hp_sos_list[i] = new_hp_sos_list[i]
 
         hp_cutoffs = new_hp_cutoffs
-        hp_sos_list = new_hp_sos_list
-        hp_zi_list = new_hp_zi_list
 
 
 def update_audio_from_pose(keypoints):
