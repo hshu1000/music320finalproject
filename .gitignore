@@ -1,3 +1,8 @@
 .vscode/
 __pycache__/
 .DS_Store
+venv/
+.venv/
+env/
+instrument_recordings/
+.DS_Store

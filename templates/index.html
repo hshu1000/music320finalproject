@@ -4,35 +4,53 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Pose Synth Control Panel</title>
+
   <style>
     :root{
-      --bg: #0b1020;
+      --bg0: #0b1020;
+      --bg1: #071a3a;
+      --bg2: #0a2a6a;
+
       --card: rgba(255,255,255,0.06);
-      --card2: rgba(255,255,255,0.09);
+      --card2: rgba(255,255,255,0.08);
+      --border: rgba(255,255,255,0.12);
+
       --text: rgba(255,255,255,0.92);
-      --muted: rgba(255,255,255,0.65);
-      --border: rgba(255,255,255,0.10);
-      --accent: #7c5cff;
-      --accent2: #22c55e;
+      --muted: rgba(255,255,255,0.60);
+
+      --cyan: #2bd9ff;
+      --blue: #4f8cff;
+
+      --good: #22c55e;
       --danger: #ef4444;
+
       --shadow: 0 18px 60px rgba(0,0,0,0.45);
       --radius: 18px;
       --radius2: 14px;
+
       --font: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
     }
+
     *{box-sizing:border-box}
+
     body{
       margin:0;
       font-family: var(--font);
       color: var(--text);
-      background: var(--bg);
       min-height:100vh;
+      background:
+        radial-gradient(1200px 700px at 18% 10%, rgba(43,217,255,0.18), transparent 60%),
+        radial-gradient(1000px 600px at 80% 25%, rgba(79,140,255,0.22), transparent 62%),
+        radial-gradient(1100px 800px at 45% 110%, rgba(43,217,255,0.10), transparent 60%),
+        linear-gradient(180deg, var(--bg2), var(--bg0) 58%, var(--bg0));
     }
+
     .wrap{
       max-width: 1100px;
       margin: 0 auto;
-      padding: 40px 18px 64px;
+      padding: 46px 18px 72px;
     }
+
     .top{
       display:flex;
       justify-content:space-between;
@@ -40,81 +58,118 @@
       gap: 18px;
       margin-bottom: 18px;
     }
+
     .title{
       display:flex;
       flex-direction:column;
-      gap: 8px;
+      gap: 10px;
+      max-width: 72ch;
     }
+
     h1{
       margin:0;
-      font-size: 28px;
-      letter-spacing: -0.02em;
-      font-weight: 750;
+      font-size: 44px;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      font-weight: 850;
+      background: linear-gradient(90deg, var(--cyan), rgba(79,140,255,0.95));
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
     }
+
     .sub{
       margin:0;
-      color: var(--muted);
-      line-height: 1.5;
-      font-size: 14px;
-      max-width: 70ch;
+      color: rgba(255,255,255,0.55);
+      line-height: 1.55;
+      font-size: 13px;
     }
+
     .pill{
       display:inline-flex;
       align-items:center;
       gap: 10px;
-      padding: 10px 12px;
-      border: 1px solid var(--border);
-      background: rgba(255,255,255,0.06);
+      padding: 12px 14px;
+      border: 1px solid rgba(43,217,255,0.28);
+      background: rgba(43,217,255,0.08);
       border-radius: 999px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.22);
-      backdrop-filter: blur(10px);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.24);
+      backdrop-filter: blur(12px);
       white-space: nowrap;
+      min-width: 190px;
+      justify-content: center;
     }
+
     .dot{
-      width:10px; height:10px;
+      width:8px;
+      height:8px;
       border-radius:999px;
-      background: var(--danger);
-      box-shadow: 0 0 0 6px rgba(239,68,68,0.10);
+      background: rgba(255,255,255,0.35);
+      box-shadow: 0 0 0 6px rgba(255,255,255,0.06);
     }
+
     .dot.on{
-      background: var(--accent2);
-      box-shadow: 0 0 0 6px rgba(34,197,94,0.10);
+      background: var(--cyan);
+      box-shadow: 0 0 0 6px rgba(43,217,255,0.12);
     }
-    .grid{
-      display:grid;
-      grid-template-columns: 1.25fr 0.75fr;
-      gap: 18px;
-      margin-top: 18px;
+
+    .pill .pill-title{
+      font-weight:800;
+      color: rgba(43,217,255,0.95);
+      font-size: 12px;
+      letter-spacing: 0.02em;
     }
-    @media (max-width: 900px){
-      .grid{grid-template-columns: 1fr;}
-      .top{flex-direction:column; align-items:stretch;}
+
+    .pill .pill-sub{
+      color: rgba(255,255,255,0.55);
+      font-size: 11px;
+      margin-top: 2px;
     }
+
     .card{
-      border: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.04));
+      border: 1px solid rgba(255,255,255,0.12);
+      background: rgba(15,23,42,0.45);
       border-radius: var(--radius);
       box-shadow: var(--shadow);
-      backdrop-filter: blur(14px);
+      backdrop-filter: blur(12px);
       overflow:hidden;
     }
+
     .card-h{
-      padding: 16px 16px 12px;
+      padding: 16px 18px 12px;
       border-bottom: 1px solid rgba(255,255,255,0.08);
       display:flex;
       align-items:center;
       justify-content:space-between;
       gap: 10px;
     }
+
     .card-h h2{
       margin:0;
-      font-size: 14px;
+      font-size: 12px;
       text-transform: uppercase;
-      letter-spacing: 0.12em;
+      letter-spacing: 0.14em;
       color: rgba(255,255,255,0.78);
-      font-weight: 700;
+      font-weight: 800;
     }
-    .card-b{padding: 16px;}
+
+    .card-b{
+      padding: 18px;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns: 1.18fr 0.82fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    @media (max-width: 900px){
+      .grid{grid-template-columns: 1fr;}
+      .top{flex-direction:column; align-items:stretch;}
+      h1{font-size: 34px;}
+    }
+
     .row{
       display:flex;
       gap: 12px;
@@ -122,6 +177,7 @@
       align-items:end;
       margin-bottom: 12px;
     }
+
     .field{
       display:flex;
       flex-direction:column;
@@ -129,131 +185,210 @@
       min-width: 220px;
       flex: 1;
     }
+
     label{
-      font-size: 12px;
-      color: var(--muted);
+      font-size: 10px;
+      color: rgba(255,255,255,0.55);
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
     }
+
     input, select{
-      padding: 12px 12px;
+      padding: 11px 12px;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.18);
+      background: rgba(2,6,23,0.35);
       color: var(--text);
       outline: none;
     }
-    input::placeholder{color: rgba(255,255,255,0.35)}
+
+    input::placeholder{
+      color: rgba(255,255,255,0.35);
+    }
+
+    input:focus, select:focus{
+      border-color: rgba(79,140,255,0.55);
+      box-shadow: 0 0 0 3px rgba(79,140,255,0.18);
+    }
+
     .btn{
-      padding: 12px 14px;
+      padding: 11px 14px;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.14);
-      background: rgba(255,255,255,0.10);
+      background: rgba(255,255,255,0.08);
       color: var(--text);
       cursor:pointer;
-      transition: transform .08s ease, background .2s ease, border-color .2s ease;
-      font-weight: 650;
-      letter-spacing: 0.01em;
+      transition: transform .08s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
+      font-weight: 750;
       user-select:none;
     }
-    .btn:hover{transform: translateY(-1px); background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.18);}
-    .btn:active{transform: translateY(0px) scale(0.99)}
+
+    .btn:hover{
+      transform: translateY(-1px);
+      background: rgba(255,255,255,0.12);
+      border-color: rgba(255,255,255,0.18);
+    }
+
+    .btn:active{
+      transform: translateY(0px) scale(0.99);
+    }
+
     .btn.primary{
-      background: linear-gradient(135deg, rgba(124,92,255,0.85), rgba(124,92,255,0.45));
-      border-color: rgba(124,92,255,0.55);
+      background: linear-gradient(135deg, rgba(79,140,255,0.95), rgba(79,140,255,0.35));
+      border-color: rgba(79,140,255,0.55);
+      box-shadow: 0 10px 25px rgba(79,140,255,0.18);
     }
+
     .btn.good{
-      background: linear-gradient(135deg, rgba(34,197,94,0.78), rgba(34,197,94,0.35));
+      background: linear-gradient(135deg, rgba(34,197,94,0.80), rgba(34,197,94,0.30));
       border-color: rgba(34,197,94,0.45);
+      box-shadow: 0 10px 25px rgba(34,197,94,0.14);
     }
+
     .btn.bad{
-      background: linear-gradient(135deg, rgba(239,68,68,0.75), rgba(239,68,68,0.30));
+      background: linear-gradient(135deg, rgba(239,68,68,0.78), rgba(239,68,68,0.28));
       border-color: rgba(239,68,68,0.45);
+      box-shadow: 0 10px 25px rgba(239,68,68,0.14);
     }
-    .mini{
-      font-size: 12px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
+
     .kpi{
       display:grid;
       grid-template-columns: 1fr 1fr;
       gap: 10px;
       margin-top: 10px;
     }
+
     .kpi .tile{
       border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.06);
+      background: rgba(2,6,23,0.28);
       border-radius: var(--radius2);
       padding: 12px;
     }
-    .tile .t{font-size: 12px; color: var(--muted); margin-bottom: 6px;}
-    .tile .v{font-size: 14px; font-weight: 700;}
+
+    .tile .t{
+      font-size: 10px;
+      color: rgba(255,255,255,0.55);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+
+    .tile .v{
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .mini{
+      font-size: 12px;
+      color: rgba(255,255,255,0.60);
+      line-height: 1.5;
+    }
+
     .toast{
       margin-top: 12px;
       padding: 12px;
       border-radius: 12px;
       border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.20);
+      background: rgba(2,6,23,0.35);
       color: rgba(255,255,255,0.88);
       display:none;
     }
-    .toast.show{display:block;}
+
+    .toast.show{
+      display:block;
+    }
+
     .list{
       margin: 10px 0 0;
       padding-left: 18px;
       color: rgba(255,255,255,0.80);
     }
+
     .chips{
       display:flex;
       gap: 8px;
       flex-wrap: wrap;
       margin-top: 8px;
     }
+
     .chip{
       padding: 8px 10px;
       border-radius: 999px;
       border: 1px solid rgba(255,255,255,0.10);
-      background: rgba(255,255,255,0.06);
+      background: rgba(2,6,23,0.30);
       color: rgba(255,255,255,0.82);
       font-size: 12px;
     }
+
     .footer{
-      margin-top: 18px;
-      color: rgba(255,255,255,0.55);
+      margin-top: 14px;
+      color: rgba(255,255,255,0.50);
       font-size: 12px;
       line-height: 1.5;
     }
+
     code.inline{
       padding: 2px 6px;
       border-radius: 8px;
-      background: rgba(0,0,0,0.25);
+      background: rgba(2,6,23,0.35);
       border: 1px solid rgba(255,255,255,0.10);
       color: rgba(255,255,255,0.85);
     }
 
-    /* NEW: camera preview styling */
-    .cam-wrap{
+    .camera-card{
       margin-top: 14px;
+      background: rgba(255,255,255,0.04);
     }
+
+    .camera-card .card-h{
+      padding-bottom: 10px;
+    }
+
+    .camera-card .card-b{
+      padding: 16px 18px 18px;
+    }
+
+    .cam-stage{
+      width: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: #d9d9d9;
+      border-radius: 8px;
+      padding: 0;
+      overflow: hidden;
+    }
+
     .cam{
       width: 100%;
-      border-radius: 16px;
-      border: 1px solid rgba(255,255,255,0.12);
-      background: rgba(0,0,0,0.20);
-      display:block;
-      aspect-ratio: 16 / 9;
-      object-fit: cover;
+      max-width: 820px;
+      border-radius: 0;
+      border: none;
+      background: #d9d9d9;
+      display: block;
+      aspect-ratio: auto;
+      object-fit: contain;
+      margin: 0 auto;
     }
+
     .cam-row{
       display:flex;
       gap: 10px;
       flex-wrap: wrap;
       margin-top: 10px;
     }
+
+    @media (max-width: 900px){
+      .cam{
+        max-width: 100%;
+      }
+    }
   </style>
 </head>
 
 <body>
   <div class="wrap">
+
     <div class="top">
       <div class="title">
         <h1>Pose Synth Control Panel</h1>
@@ -266,14 +401,31 @@
       <div class="pill" title="Synth running status">
         <div id="statusDot" class="dot"></div>
         <div>
-          <div style="font-weight:700; font-size:13px;">Synth</div>
-          <div id="statusText" style="color:var(--muted); font-size:12px;">Not started</div>
+          <div class="pill-title">Synth</div>
+          <div id="statusText" class="pill-sub">Not started</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card camera-card">
+      <div class="card-h">
+        <h2>Camera preview (streams from this machine)</h2>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+          <button class="btn primary" onclick="cameraStart()">Start camera</button>
+          <button class="btn" onclick="cameraStop()">Stop camera</button>
+        </div>
+      </div>
+      <div class="card-b">
+        <div class="cam-stage">
+          <img id="cam" class="cam" alt="Camera preview (off)" />
+        </div>
+        <div class="footer">
+          Tip: If the camera preview is blank, click "Start camera" and allow camera access for Python or Terminal.
         </div>
       </div>
     </div>
 
     <div class="grid">
-      <!-- Left: Main controls -->
       <div class="card">
         <div class="card-h">
           <h2>Controls</h2>
@@ -353,25 +505,10 @@
             <button class="btn bad" onclick="recordStop()">Stop recording</button>
           </div>
 
-          <!-- NEW: Camera preview section -->
-          <div class="cam-wrap">
-            <div class="mini">Camera preview (streams from this machine)</div>
-            <img id="cam" class="cam" alt="Camera preview (off)" />
-            <div class="cam-row">
-              <button class="btn" onclick="cameraStart()">Start camera</button>
-              <button class="btn" onclick="cameraStop()">Stop camera</button>
-            </div>
-          </div>
-
           <div id="toast" class="toast"></div>
-
-          <div class="footer">
-            Tip: If the camera preview is blank, click “Start camera” and allow camera access for Python/Terminal.
-          </div>
         </div>
       </div>
 
-      <!-- Right: Status / info -->
       <div class="card">
         <div class="card-h">
           <h2>Status</h2>
@@ -580,11 +717,10 @@
     await refreshRecordings();
   }
 
-  // NEW: camera controls (MJPEG stream)
   async function cameraStart(){
     await postJSON("/api/camera/start", {});
     const cam = document.getElementById("cam");
-    cam.src = "/video_feed?" + Date.now(); // cache-bust
+    cam.src = "/video_feed?" + Date.now();
     toast("Camera started");
   }
 
@@ -595,14 +731,12 @@
     toast("Camera stopped");
   }
 
-  // Initial load
   (function init(){
     const state = {{ state | tojson }};
     applyStateToUI(state);
     setRunningUI(false);
     refreshRecordings();
 
-    // If backend says camera is on, start the stream immediately
     if(state.camera_on){
       const cam = document.getElementById("cam");
       cam.src = "/video_feed?" + Date.now();
